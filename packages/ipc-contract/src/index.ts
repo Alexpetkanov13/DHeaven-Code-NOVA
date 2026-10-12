@@ -31,6 +31,7 @@ export const Settings = z.object({
   mode: z.enum(['focus', 'nova', 'spectra']).default('nova'),
   sidebarWidth: z.number().int().min(160).max(800).default(260),
   panelHeight: z.number().int().min(80).max(800).default(180),
+  javaHome: z.string().max(4096).nullable().default(null),
 });
 export type Settings = z.infer<typeof Settings>;
 export const SettingsPatch = Settings.partial().omit({ version: true });
@@ -122,6 +123,11 @@ export const channels = {
   'lsp.close.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri }), z.null()),
   'lsp.request.v1': def(z.object({ languageId: z.string().max(64), reqId: z.string().max(64), method: z.enum(LSP_METHODS), params: z.unknown() }), z.unknown()),
   'lsp.cancel.v1': def(z.object({ reqId: z.string().max(64) }), z.null()),
+  'jdk.list.v1': def(z.object({}), z.object({
+    jdks: z.array(z.object({ home: z.string(), version: z.string(), major: z.number(), source: z.string() })),
+    globalHome: z.string().nullable(), workspaceHome: z.string().nullable(), effective: z.string().nullable(),
+  })),
+  'jdk.select.v1': def(z.object({ home: z.string().max(4096).nullable(), scope: z.enum(['global', 'workspace']) }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),

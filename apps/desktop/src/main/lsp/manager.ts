@@ -26,7 +26,7 @@ export function badges(caps: Record<string, unknown>, dynamic: Set<string>): str
 
 export const ALLOWED_REQUESTS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'workspace/executeCommand'] as const;
 
-interface Entry { def: ServerDef; conn: LspConnection | null; crashes: number[]; dynamic: Set<string>; reason: string | null; state: ServerStatus['state'] }
+interface Entry { def: ServerDef; logs: string[]; conn: LspConnection | null; crashes: number[]; dynamic: Set<string>; reason: string | null; state: ServerStatus['state'] }
 
 export interface ManagerDeps {
   serversDir: string; storageDir: string;
@@ -44,7 +44,7 @@ export class LspManager {
   private inflight = new Map<string, { conn: LspConnection; id: number }>();
   constructor(private deps: ManagerDeps, defs: ServerDef[] = Object.values(SERVERS)) {
     this.defs = defs;
-    for (const def of defs) this.entries.set(def.id, { def, conn: null, crashes: [], dynamic: new Set(), reason: null, state: 'stopped' });
+    for (const def of defs) this.entries.set(def.id, { def, logs: [], conn: null, crashes: [], dynamic: new Set(), reason: null, state: 'stopped' });
   }
 
   async setWorkspace(root: string | null) {
@@ -66,7 +66,7 @@ export class LspManager {
     }
     return out;
   }
-  logs(id: string) { return this.entries.get(id)?.conn?.logs ?? []; }
+  logs(id: string) { return this.entries.get(id)?.logs ?? []; }
   private publish() { void this.status().then((s) => this.deps.emit('lsp.status.v1', { servers: s })); }
 
   /** Start (if needed) the server for a language. Returns the connection only when ready. */
@@ -112,6 +112,7 @@ export class LspManager {
       }), (method, params) => this.onServerRequest(e, method, params));
     } catch (err) { e.state = 'failed'; e.reason = String(err); this.publish(); return; }
     e.conn = conn;
+    conn.on('log', (l: string) => { e.logs.push(`[${new Date().toISOString().slice(11, 19)}] ${l}`); if (e.logs.length > 2000) e.logs.splice(0, e.logs.length - 2000); });
     conn.on('notification', (method: string, params: unknown) => {
       if (method === 'textDocument/publishDiagnostics') {
         const p = mapUris(params, canonicalUri) as { uri: string; diagnostics: unknown[]; version?: number };

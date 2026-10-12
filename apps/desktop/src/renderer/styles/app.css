@@ -115,3 +115,4 @@ button { font: inherit; color: inherit; }
 .panel-tabs .count { margin-left: 4px; background: var(--nova-ultraviolet-800); border-radius: 8px; padding: 0 5px; }
 .preview-list { max-height: 260px; overflow: auto; font-size: 12px; margin: 0; padding-left: 18px; }
 .term-out { font: 12px var(--nova-font-mono); white-space: pre-wrap; flex: 1; overflow: auto; padding: 0 12px 8px; margin: 0; }
+.ls-card select, .ls-card input[type=text] { max-width: 100%; width: 100%; }

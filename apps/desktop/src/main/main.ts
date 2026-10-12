@@ -13,7 +13,8 @@ import { LspManager } from './lsp/manager';
 import { LspRequestError } from './lsp/server';
 import { SERVERS } from './lsp/registry';
 import { installServer } from './lsp/installer';
-import { discoverJdks, type Jdk } from './jdk';
+import { discoverJdks, probeJdk, type Jdk } from './jdk';
+import { WorkspaceSettingsStore } from './workspaceSettings';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 
@@ -44,8 +45,15 @@ let trust: TrustStore;
 let daemon: DaemonClient;
 let lsp: LspManager;
 const serversDir = () => (process.env.NOVA_SERVERS_DIR ? path.resolve(process.env.NOVA_SERVERS_DIR) : path.join(app.getPath('userData'), 'servers'));
-async function jdkFor(_root: string, minMajor: number): Promise<Jdk | null> {
-  return (await discoverJdks()).find((j) => j.major >= minMajor) ?? null;
+let wsSettings: WorkspaceSettingsStore;
+/** Effective JDK: workspace override → global setting → newest discovered. Returns null if none satisfies minMajor. */
+async function jdkFor(root: string, minMajor: number): Promise<Jdk | null> {
+  const chosen = (await wsSettings.get(root)).javaHome ?? (await store.getSettings()).javaHome;
+  if (chosen) {
+    const j = await probeJdk(chosen, 'selected');
+    if (j && j.major >= minMajor) return j;
+  }
+  return (await discoverJdks(chosen ? [chosen] : [])).find((j) => j.major >= minMajor) ?? null;
 }
 const ptys = new Set<number>();
 const searches = new Set<number>();
@@ -153,6 +161,20 @@ const handlers: Handlers = {
     catch (e) { if (e instanceof LspRequestError) throw new AppError('LSP_ERROR', `${e.code}: ${e.message}`); throw e; }
   },
   'lsp.cancel.v1': async ({ reqId }) => { lsp.cancel(reqId); return null; },
+  'jdk.list.v1': async () => {
+    const g = (await store.getSettings()).javaHome;
+    const w = workspace ? (await wsSettings.get(workspace.root)).javaHome : null;
+    const extra = [g, w].filter((x): x is string => !!x);
+    const eff = workspace ? await jdkFor(workspace.root, 0) : null;
+    return { jdks: await discoverJdks(extra), globalHome: g, workspaceHome: w, effective: eff?.home ?? null };
+  },
+  'jdk.select.v1': async ({ home, scope }) => {
+    if (home && !(await probeJdk(home, 'selected'))) throw new AppError('NOT_FOUND', `Not a JDK (missing bin/java or release file): ${home}`);
+    if (scope === 'global') await store.updateSettings({ javaHome: home });
+    else await wsSettings.set(needWs().root, { javaHome: home });
+    if (workspace) for (const id of Object.keys(SERVERS)) if ((await lsp.status()).find((x) => x.id === id && x.state !== 'stopped' && x.state !== 'blocked')) await lsp.restart(id);
+    return null;
+  },
   'recent.list.v1': async () => store.listRecent(),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
@@ -214,6 +236,7 @@ async function createWindow() {
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'));
   trust = new TrustStore(app.getPath('userData'));
+  wsSettings = new WorkspaceSettingsStore(app.getPath('userData'));
   daemon = new DaemonClient(daemonPath(), (method, params) => {
     const p = params as Record<string, unknown>;
     if (method === 'search.matches') emit('search.matches.v1', p as unknown as Events['search.matches.v1']);

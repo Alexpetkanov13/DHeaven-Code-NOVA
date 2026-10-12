@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ServerStatus } from '@nova/ipc-contract';
 import { call, on } from '../lib/ipc';
 
@@ -11,6 +11,8 @@ export function LanguageServersView({ trusted, onError, askInstall, children }: 
   const [servers, setServers] = useState<ServerStatus[]>([]);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const logRef = useRef<HTMLPreElement>(null);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
   const [install, setInstall] = useState<Record<string, string>>({});
   useEffect(() => {
     void call('lsp.status.v1', {}).then(setServers).catch(onError);
@@ -43,7 +45,7 @@ export function LanguageServersView({ trusted, onError, askInstall, children }: 
           </div>
           {install[s.id] && <div className="muted">{install[s.id]}</div>}
           <div className="muted small">{s.limitations}</div>
-          {logsFor === s.id && <pre className="ls-logs" aria-label={`${s.name} logs`}>{logs.slice(-200).join('\n') || '(no output yet)'}</pre>}
+          {logsFor === s.id && <pre ref={logRef} className="ls-logs" aria-label={`${s.name} logs`}>{logs.slice(-200).join('\n') || '(no output yet)'}</pre>}
         </div>
       ))}
     </div>
