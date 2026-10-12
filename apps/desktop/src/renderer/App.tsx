@@ -25,11 +25,14 @@ import logo from './logo.svg';
 import { ExtensionsClient, DEFAULT_THEME } from './lib/extensions';
 import { ExtensionsView, ExtensionTreeViews, PermissionPrompt } from './components/ExtensionsView';
 import type { Events } from '@nova/ipc-contract';
+import { AiClient, type PrepareReq } from './lib/ai';
+import { terminalQueue } from './lib/terminalQueue';
+import { AiView, AiPreviewDialog, InlineDiffDialog } from './components/AiView';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests' | 'extensions';
+type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests' | 'extensions' | 'ai';
 type Dialog =
   | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
   | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
@@ -91,6 +94,8 @@ export function App() {
 
   const extHooks = useRef({ out, fail, setOutChannel, setShowPanel, setPanelTab });
   extHooks.current = { out, fail, setOutChannel, setShowPanel, setPanelTab };
+  const [aiClient] = useState(() => new AiClient((e) => extHooks.current.fail(e)));
+  useEffect(() => () => aiClient.dispose(), [aiClient]);
   const [extClient] = useState(() => new ExtensionsClient({
     onOutput: (e) => { if (e.show) { extHooks.current.setOutChannel(e.key); extHooks.current.setShowPanel(true); extHooks.current.setPanelTab('output'); } },
     onMessage: (e) => {
@@ -376,6 +381,7 @@ export function App() {
     void call('settings.update.v1', p).then(setSettings).catch(fail);
   }, [fail]);
 
+  const aiActionRef = useRef<(a: Exclude<PrepareReq['action'], 'chat'>) => void>(() => {});
   // ---- Monaco lifecycle: one editor, models swapped per tab. Keystrokes never cross IPC.
   const activeTab = tabs.find((t) => t.rel === active);
   useEffect(() => {
@@ -384,6 +390,10 @@ export function App() {
       const ed = monaco.editor.create(hostRef.current, { theme: 'nova-dark', automaticLayout: true, fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace' });
       ed.onDidChangeCursorPosition((e) => setCursor({ ln: e.position.lineNumber, col: e.position.column }));
       debugStore.attach(ed);
+      ed.addAction({ id: 'nova.ai.explain', label: 'NOVA AI: Explain Selection', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('explainSelection') });
+      ed.addAction({ id: 'nova.ai.inline', label: 'NOVA AI: Inline Edit…', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('inlineEdit') });
+      ed.addAction({ id: 'nova.ai.tests', label: 'NOVA AI: Generate Tests', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('generateTests') });
+      ed.addAction({ id: 'nova.ai.doc', label: 'NOVA AI: Document Function', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('documentFunction') });
       ed.addAction({ id: 'nova.rename', label: 'Rename Symbol (with preview)', keybindings: [monaco.KeyCode.F2], contextMenuGroupId: '1_modification', run: (e) => bridgeRef.current?.rename(e) });
       editorRef.current = ed;
     }
@@ -414,6 +424,46 @@ export function App() {
   };
   const showView = (v: View) => { if (view === v && showSidebar) setShowSidebar(false); else { setView(v); setShowSidebar(true); } };
 
+  // ---- NOVA AI actions (requests are built and sent by main; nothing is applied or run automatically)
+  const aiAction = useCallback((action: Exclude<PrepareReq['action'], 'chat'>) => {
+    const ed = editorRef.current; const t = tabsRef.current.find((x) => x.rel === activeRef.current);
+    if (!ed || !t) { fail('NOVA AI: open a file first'); return; }
+    const sel = ed.getSelection(); const m = t.model;
+    const range = sel && !sel.isEmpty() ? sel : null;
+    if (!range && action === 'explainSelection') { fail('NOVA AI: select some code first'); return; }
+    const startLine = range ? range.startLineNumber : 1;
+    const endLine = range ? (range.endColumn === 1 && range.endLineNumber > range.startLineNumber ? range.endLineNumber - 1 : range.endLineNumber) : m.getLineCount();
+    const full = new monaco.Range(startLine, 1, endLine, m.getLineMaxColumn(endLine));
+    const text = action === 'explainSelection' && range ? m.getValueInRange(range) : m.getValueInRange(full);
+    const req: PrepareReq = { action, selection: { rel: t.rel, text, startLine, languageId: m.getLanguageId() } };
+    setView('ai'); setShowSidebar(true);
+    if (action === 'inlineEdit') {
+      setDialog({ kind: 'input', title: `Inline edit ${t.rel}:${startLine}-${endLine} — instruction`, submit: (instruction) => { setDialog(null); if (instruction.trim()) void aiClient.ask({ ...req, prompt: instruction }, { rel: t.rel, startLine, endLine, original: text, instruction }); } });
+      return;
+    }
+    void aiClient.ask(req);
+  }, [aiClient, fail]);
+  const explainProblem = useCallback((p: ProblemItem) => {
+    const m = monaco.editor.getModel(monaco.Uri.parse(p.uri));
+    const snippet = m ? m.getValueInRange(new monaco.Range(Math.max(1, p.line - 5), 1, Math.min(m.getLineCount(), p.line + 5), 10_000)) : null;
+    setView('ai'); setShowSidebar(true);
+    void aiClient.ask({ action: 'explainError', diagnostic: { rel: p.rel, line: p.line, col: p.col, severity: p.severity, message: p.message, source: p.source },
+      ...(snippet !== null ? { selection: { rel: p.rel, text: snippet, startLine: Math.max(1, p.line - 5), languageId: m!.getLanguageId() } } : {}) });
+  }, [aiClient]);
+  const applyInline = useCallback(async (rel: string, startLine: number, endLine: number, text: string) => {
+    const t = tabsRef.current.find((x) => x.rel === rel); if (!t) { fail(`${rel} is no longer open`); return; }
+    const m = t.model; const range = new monaco.Range(startLine, 1, endLine, m.getLineMaxColumn(endLine));
+    if (m.getValueInRange(range) !== aiClient.inline?.original) { fail('The file changed since the AI request; edit not applied'); return; }
+    m.pushEditOperations([], [{ range, text }], () => null);
+    try { const r = await call('fs.write.v1', { rel, content: m.getValue(), expectedMtimeMs: t.mtimeMs }); markSaved(rel, rel, r.mtimeMs); out(`Applied AI edit to ${rel} and saved`); } catch (e) { fail(e); }
+  }, [aiClient, fail, out]);
+  const runProposed = useCallback((cmd: string) => {
+    if (!wsRef.current) { fail('Open a folder to use the terminal'); return; }
+    if (!trusted) { fail('Proposed commands can only run in a trusted workspace'); return; }
+    setDialog({ kind: 'confirm', message: 'Run this AI-proposed command in the terminal? Review it first — it runs with your permissions.', list: [cmd], confirmLabel: 'Run in Terminal',
+      confirm: () => { setDialog(null); setShowPanel(true); setPanelTab('terminal'); terminalQueue.push(cmd); window.dispatchEvent(new CustomEvent('nova-terminal-run')); } });
+  }, [fail, trusted]);
+  aiActionRef.current = aiAction;
   const runExt = useCallback((command: string, args?: unknown[]) => {
     void call('ext.executeCommand.v1', args ? { command, args } : { command }).catch(fail);
   }, [fail]);
@@ -446,13 +496,19 @@ export function App() {
     { id: 'editor.fontUp', title: 'Editor: Increase Font Size', run: () => settings && updateSettings({ editorFontSize: Math.min(40, settings.editorFontSize + 1) }) },
     { id: 'editor.fontDown', title: 'Editor: Decrease Font Size', run: () => settings && updateSettings({ editorFontSize: Math.max(8, settings.editorFontSize - 1) }) },
     ...recent.map((r) => ({ id: `recent:${r.root}`, title: `Open Recent: ${r.name}  —  ${r.root}`, run: () => void openRecent(r.root) })),
+    { id: 'ai.open', title: 'NOVA AI: Open Panel', run: () => { setView('ai'); setShowSidebar(true); } },
+    { id: 'ai.explainSelection', title: 'NOVA AI: Explain Selection', run: () => aiAction('explainSelection') },
+    { id: 'ai.generateTests', title: 'NOVA AI: Generate Tests', run: () => aiAction('generateTests') },
+    { id: 'ai.documentFunction', title: 'NOVA AI: Document Function', run: () => aiAction('documentFunction') },
+    { id: 'ai.inlineEdit', title: 'NOVA AI: Inline Edit…', run: () => aiAction('inlineEdit') },
+    { id: 'ai.clearHistory', title: 'NOVA AI: Clear History', run: () => void aiClient.clearHistory() },
     { id: 'workbench.extensions', title: 'View: Extensions', keybinding: 'Ctrl+Shift+X', run: () => { setView('extensions'); setShowSidebar(true); } },
     { id: 'theme:default', title: 'Preferences: Color Theme: NOVA Dark (built-in)', run: () => { extClient.applyTheme(DEFAULT_THEME); updateSettings({ colorTheme: DEFAULT_THEME }); } },
     ...extClient.contributions.themes.map((t) => ({ id: `theme:${t.id}`, title: `Preferences: Color Theme: ${t.label} (${t.extName})`, run: () => { if (extClient.applyTheme(t.id)) updateSettings({ colorTheme: t.id }); } })),
     ...extClient.contributions.commands.filter((c) => c.palette).map((c) => ({ id: `ext:${c.command}`, title: `${c.category ?? c.extName}: ${c.title}`, run: () => runExt(c.command) })),
     ...extClient.contributions.tasks.map((t) => ({ id: `task:${t.extId}:${t.id}`, title: `Tasks: Run ${t.label} (${t.extName})`, run: () => runExt(t.command) })),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- contributions is a mutable field; listing it re-memoizes on refresh
-  ], [extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
+  ], [aiClient, aiAction, extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
 
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
@@ -489,6 +545,7 @@ export function App() {
           <button className={view === 'debug' && showSidebar ? 'on' : ''} title="Run and Debug" aria-label="Run and Debug" onClick={() => showView('debug')}>▷</button>
           <button className={view === 'tests' && showSidebar ? 'on' : ''} title="Testing" aria-label="Testing" onClick={() => showView('tests')}>⚗</button>
           <button className={view === 'extensions' && showSidebar ? 'on' : ''} title="Extensions (Ctrl+Shift+X)" aria-label="Extensions" onClick={() => showView('extensions')}>⧉</button>
+          <button className={view === 'ai' && showSidebar ? 'on' : ''} title="NOVA AI" aria-label="NOVA AI" onClick={() => showView('ai')}>✦</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -496,7 +553,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : view === 'extensions' ? 'Extensions' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : view === 'extensions' ? 'Extensions' : view === 'ai' ? 'NOVA AI' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -506,7 +563,9 @@ export function App() {
                 )}
               </div>
               {ws && !trusted && <div className="banner">Restricted Mode <button className="btn small" onClick={() => askTrust(ws)}>Trust…</button></div>}
-              {view === 'extensions' ? (
+              {view === 'ai' ? (
+                <AiView client={aiClient} activeRel={activeTab?.rel ?? null} openRels={tabs.map((t) => t.rel)} hasWorkspace={!!ws} onRunCommand={runProposed} />
+              ) : view === 'extensions' ? (
                 <ExtensionsView client={extClient} trusted={trusted} onError={fail} onLog={out} confirmInstall={(p, go, cancel) => setDialog({
                   kind: 'confirm', confirmLabel: p.isUpdate ? `Update to ${p.version}` : 'Install',
                   message: `${p.isUpdate ? `Update ${p.displayName} from ${p.fromVersion} to ${p.version}` : `Install ${p.displayName} ${p.version}`} by ${p.publisher}? ${p.hasCode ? 'It contains code that runs in the isolated extension host (trusted workspaces only).' : 'It is declarative only (no code).'}`,
@@ -590,7 +649,7 @@ export function App() {
                   <button className={panelTab === 'problems' ? 'on' : ''} onClick={() => setPanelTab('problems')}>Problems{problemList.length ? <span className="count" aria-label="problem count">{problemList.length}</span> : null}</button>
                 </div>
                 {panelTab === 'problems' ? (
-                  <ProblemsPanel items={problemList} onOpen={(p) => void openFile(p.rel, p.line, p.col)} />
+                  <ProblemsPanel items={problemList} onOpen={(p) => void openFile(p.rel, p.line, p.col)} {...(aiClient.enabled ? { onExplain: explainProblem } : {})} />
                 ) : panelTab === 'debug' ? (
                   <DebugConsole store={debugStore} />
                 ) : panelTab === 'output' ? (
@@ -625,7 +684,9 @@ export function App() {
         {activeTab && !showDiff && <span>{isDirty(activeTab) ? 'Unsaved' : 'Saved'}</span>}
         <span>{settings.mode === 'focus' ? 'Focus' : 'NOVA'} mode</span>
       </footer>
-      {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); editorRef.current?.focus(); }} />}
+      {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); setTimeout(() => { if (!document.querySelector('.palette-backdrop')) editorRef.current?.focus(); }, 0); }} />}
+      <AiPreviewDialog client={aiClient} />
+      <InlineDiffDialog client={aiClient} onApply={applyInline} />
       {permReqs[0] && <PermissionPrompt key={permReqs[0].requestId} req={permReqs[0]} onAnswer={(grant, remember) => { const r = permReqs[0]!; setPermReqs((q) => q.slice(1)); void call('ext.permissionAnswer.v1', { requestId: r.requestId, grant, remember }).catch(fail); }} />}
       {toasts.length > 0 && <div className="toasts" aria-live="polite">{toasts.map((t) => <div key={t.id} className={`toast t-${t.level}`}>{t.text}</div>)}</div>}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}

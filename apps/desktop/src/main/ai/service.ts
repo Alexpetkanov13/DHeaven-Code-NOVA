@@ -141,12 +141,12 @@ export class AiService {
           onRetry: (attempt, err) => this.d.emit('ai.status.v1', { requestId, message: `Retrying (${attempt}/${c.retries}) after: ${err.message}` }) },
         { timeoutMs: c.timeoutMs, idleTimeoutMs: c.idleTimeoutMs, retries: c.retries });
         text = r.text;
+        if (p.root) await this.d.history.append(p.root, this.entry('user', p.userText, meta), this.entry('assistant', text, meta)).catch(() => {});
         this.d.emit('ai.done.v1', { requestId, text, error: null, cancelled: false, code: extractCode(text), commands: proposedCommands(text), model: r.model, usage: { prompt: r.promptTokens ?? null, completion: r.completionTokens ?? null } });
-        if (p.root) await this.d.history.append(p.root, this.entry('user', p.userText, meta), this.entry('assistant', text, meta));
       } catch (e) {
         const cancelled = !!(e as { cancelled?: boolean }).cancelled; const msg = e instanceof Error ? e.message : String(e);
-        this.d.emit('ai.done.v1', { requestId, text, error: cancelled ? null : msg, cancelled, code: null, commands: [], model: meta.model, usage: null });
         if (p.root) await this.d.history.append(p.root, this.entry('user', p.userText, meta), this.entry('assistant', text + (cancelled ? '\n[cancelled]' : ''), meta, cancelled ? 'cancelled' : msg)).catch(() => {});
+        this.d.emit('ai.done.v1', { requestId, text, error: cancelled ? null : msg, cancelled, code: null, commands: [], model: meta.model, usage: null });
       } finally { this.running.delete(requestId); }
     })();
     return { requestId };

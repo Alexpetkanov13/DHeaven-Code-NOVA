@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { b64ToBytes, call, on } from '../lib/ipc';
+import { terminalQueue } from '../lib/terminalQueue';
 
 /** Real shell via novad PTY. Requires workspace trust. */
 export function TerminalPanel({ trusted, workspaceKey, onError, onTrust }: { trusted: boolean; workspaceKey: string; onError(e: unknown): void; onTrust(): void }) {
@@ -10,6 +11,11 @@ export function TerminalPanel({ trusted, workspaceKey, onError, onTrust }: { tru
   const [gen, setGen] = useState(0);
   const [exited, setExited] = useState<number | null | undefined>(undefined);
   const ptyRef = useRef<number | null>(null);
+  // AI-proposed commands arrive here only after the user clicked "Run" and confirmed (trusted workspace only).
+  useEffect(() => {
+    const h = () => { if (!trusted || ptyRef.current === null) return; for (const cmd of terminalQueue.splice(0)) void call('terminal.write.v1', { ptyId: ptyRef.current, data: `${cmd}\r` }).catch(onError); };
+    window.addEventListener('nova-terminal-run', h); return () => window.removeEventListener('nova-terminal-run', h);
+  }, [trusted, onError]);
 
   useEffect(() => {
     if (!trusted || !host.current) return;
@@ -28,6 +34,7 @@ export function TerminalPanel({ trusted, workspaceKey, onError, onTrust }: { tru
     void call('terminal.spawn.v1', { cols: Math.max(2, term.cols), rows: Math.max(2, term.rows) }).then((r) => {
       if (disposed) { void call('terminal.kill.v1', { ptyId: r.ptyId }); return; }
       ptyRef.current = r.ptyId;
+      for (const c of terminalQueue.splice(0)) void call('terminal.write.v1', { ptyId: r.ptyId, data: `${c}\r` }).catch(onError);
     }, onError);
     const sub = term.onData((d) => { if (ptyRef.current !== null) void call('terminal.write.v1', { ptyId: ptyRef.current, data: d }).catch(onError); });
     const ro = new ResizeObserver(() => {

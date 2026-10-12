@@ -24,7 +24,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             if (e.key === 'Escape') onClose();
             else if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(i + 1, items.length - 1)); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)); }
-            else if (e.key === 'Enter') run(items[idx]);
+            else if (e.key === 'Enter') { e.preventDefault(); run(items[idx]); }
           }}
         />
         <ul role="listbox">
