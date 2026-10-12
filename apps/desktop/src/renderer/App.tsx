@@ -61,6 +61,7 @@ export function App() {
   useEffect(() => {
     void call('settings.get.v1', {}).then(setSettings).catch(fail);
     void call('recent.list.v1', {}).then(setRecent).catch(fail);
+    void call('daemon.status.v1', {}).then((r) => setDaemon((d) => (d === 'starting' ? r.state : d))).catch(fail);
     return on('daemon.status.v1', (p) => { setDaemon(p.state); out(`novad ${p.state}${p.message ? `: ${p.message}` : ''}`, p.state === 'failed'); });
   }, [fail, out]);
 

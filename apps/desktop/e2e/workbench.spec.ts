@@ -31,7 +31,7 @@ test('open folder, edit, save, relaunch shows recent', async () => {
     frozen: Object.isFrozen(window.nova),
     csp: (await fetch('nova://app/index.html')).headers.get('content-security-policy'),
   }));
-  expect(sec).toMatchObject({ require: 'undefined', process: 'undefined', api: ['invoke', 'onMenu'], frozen: true });
+  expect(sec).toMatchObject({ require: 'undefined', process: 'undefined', api: ['invoke', 'onEvent', 'onMenu'], frozen: true });
   expect(sec.csp).toContain("script-src 'self'");
   // Unknown channel and path traversal are rejected by main.
   const bad = await page.evaluate(() => window.nova.invoke('fs.exec.v1' as never, {} as never));
@@ -39,6 +39,7 @@ test('open folder, edit, save, relaunch shows recent', async () => {
 
   await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, ws);
   await page.getByRole('button', { name: 'Open Folder…' }).click();
+  await page.getByRole('button', { name: 'Restricted Mode' }).click(); // workspace-trust prompt
   await page.locator('[data-rel="src"]').click();
   await page.locator('[data-rel="src/hello.ts"]').click();
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Hello');

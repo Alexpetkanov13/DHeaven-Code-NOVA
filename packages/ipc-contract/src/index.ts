@@ -58,6 +58,7 @@ const def = <Req extends z.ZodTypeAny, Res extends z.ZodTypeAny>(req: Req, res: 
 
 export const channels = {
   'app.info.v1': def(z.object({}), z.object({ version: z.string(), platform: z.string(), electron: z.string() })),
+  'daemon.status.v1': def(z.object({}), z.object({ state: z.enum(['starting', 'ready', 'restarting', 'failed']) })),
   'workspace.openDialog.v1': def(z.object({}), WorkspaceInfo.nullable()),
   'workspace.open.v1': def(z.object({ root: z.string().max(4096) }), WorkspaceInfo),
   'workspace.current.v1': def(z.object({}), WorkspaceInfo.nullable()),

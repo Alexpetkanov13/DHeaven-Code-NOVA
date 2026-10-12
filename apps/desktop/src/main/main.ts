@@ -74,6 +74,7 @@ const needWs = () => { if (!workspace) throw new AppError('NO_WORKSPACE', 'No fo
 type Handlers = { [C in keyof typeof channels]: (req: import('zod').output<(typeof channels)[C]['req']>) => Promise<unknown> };
 const handlers: Handlers = {
   'app.info.v1': async () => ({ version: app.getVersion(), platform: process.platform, electron: process.versions.electron }),
+  'daemon.status.v1': async () => ({ state: daemon.state }),
   'workspace.openDialog.v1': async () => {
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] });
     const p = r.filePaths[0];

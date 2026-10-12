@@ -5,6 +5,10 @@ copyright: Copyright © 2026 DHeaven
 directories: { output: release, buildResources: build }
 files: [dist/**/*, package.json, "!dist/**/*.map"]
 asar: true
+extraResources:
+  - from: ../../target/release/
+    to: .
+    filter: [novad, novad.exe]
 artifactName: "DHeaven-Code-NOVA-${version}-${os}-${arch}.${ext}"
 win:
   target: [nsis, portable, zip]
