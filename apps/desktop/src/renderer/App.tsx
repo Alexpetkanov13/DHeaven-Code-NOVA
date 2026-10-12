@@ -29,11 +29,12 @@ import { AiClient, type PrepareReq } from './lib/ai';
 import { terminalQueue } from './lib/terminalQueue';
 import { AiView, AiPreviewDialog, InlineDiffDialog } from './components/AiView';
 import { NewProjectWizard } from './components/NewProjectWizard';
+import { MinecraftView } from './components/MinecraftView';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests' | 'extensions' | 'ai';
+type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests' | 'extensions' | 'ai' | 'runTasks';
 type Dialog =
   | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
   | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
@@ -110,6 +111,7 @@ export function App() {
     onTree: (viewId) => window.dispatchEvent(new CustomEvent('nova-ext-tree', { detail: viewId })),
     onError: (e) => extHooks.current.fail(e),
   }));
+  const runTasksView = extClient.contributions.gradleRunTasks[0]?.view ?? null;
   useEffect(() => { const off = extClient.subscribe(() => extBump((n) => n + 1)); void extClient.refresh(); return () => { off(); extClient.dispose(); }; }, [extClient]);
   const themeApplied = useRef(false);
   useEffect(() => {
@@ -482,6 +484,7 @@ export function App() {
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
     { id: 'project.new', title: 'File: New Project…', run: () => setWizard(true) },
+    ...(runTasksView ? [{ id: 'runTasks.open', title: `View: ${runTasksView}`, run: () => { setView('runTasks'); setShowSidebar(true); } }] : []),
     { id: 'file.save', title: 'File: Save', keybinding: 'Ctrl+S', run: () => void save() },
     { id: 'file.saveAs', title: 'File: Save As…', keybinding: 'Ctrl+Shift+S', run: () => void saveAs() },
     { id: 'file.close', title: 'File: Close Editor', run: () => active && closeTab(active) },
@@ -549,6 +552,7 @@ export function App() {
           <button className={view === 'tests' && showSidebar ? 'on' : ''} title="Testing" aria-label="Testing" onClick={() => showView('tests')}>⚗</button>
           <button className={view === 'extensions' && showSidebar ? 'on' : ''} title="Extensions (Ctrl+Shift+X)" aria-label="Extensions" onClick={() => showView('extensions')}>⧉</button>
           <button className={view === 'ai' && showSidebar ? 'on' : ''} title="NOVA AI" aria-label="NOVA AI" onClick={() => showView('ai')}>✦</button>
+          {runTasksView && <button className={view === 'runTasks' && showSidebar ? 'on' : ''} title={`${runTasksView} (contributed run tasks)`} aria-label={runTasksView} onClick={() => showView('runTasks')}>⛏</button>}
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -556,7 +560,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : view === 'extensions' ? 'Extensions' : view === 'ai' ? 'NOVA AI' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : view === 'extensions' ? 'Extensions' : view === 'ai' ? 'NOVA AI' : view === 'runTasks' ? runTasksView ?? 'Run Tasks' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -589,6 +593,8 @@ export function App() {
                   message: `Download ${info.name} ${info.version} (${info.sizeHint}, ${info.license}) from ${info.url}? It is verified against a pinned SHA-256 before use and loaded into the Java language server (which restarts). Nothing is downloaded without this confirmation.`,
                   confirm: () => { setDialog(null); void call('debug.install.v1', { consent: true }).catch(fail); },
                 })} />
+              ) : view === 'runTasks' ? (
+                <MinecraftView title={runTasksView ?? 'Minecraft'} trusted={trusted} hasWorkspace={!!ws} onError={fail} />
               ) : view === 'tests' ? null : view === 'gradle' ? (
                 <GradleView trusted={trusted} hasWorkspace={!!ws} onError={fail} onProblems={onGradleProblems} />
               ) : view === 'lsp' ? (

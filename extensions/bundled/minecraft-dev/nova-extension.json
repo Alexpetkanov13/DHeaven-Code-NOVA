@@ -70,6 +70,59 @@
         "language": "json",
         "path": "snippets/minecraft-json.json"
       }
+    ],
+    "gradleRunTasks": [
+      {
+        "view": "Minecraft",
+        "plugin": "net.fabricmc.fabric-loom",
+        "label": "Fabric (Loom)",
+        "tasks": [
+          {
+            "name": "runClient",
+            "label": "Run client",
+            "requiresEula": false,
+            "runDir": "run"
+          },
+          {
+            "name": "runServer",
+            "label": "Run server",
+            "requiresEula": true,
+            "runDir": "run"
+          }
+        ]
+      },
+      {
+        "view": "Minecraft",
+        "plugin": "fabric-loom",
+        "label": "Fabric (Loom, legacy plugin id)",
+        "tasks": [
+          {
+            "name": "runClient",
+            "label": "Run client",
+            "requiresEula": false,
+            "runDir": "run"
+          },
+          {
+            "name": "runServer",
+            "label": "Run server",
+            "requiresEula": true,
+            "runDir": "run"
+          }
+        ]
+      },
+      {
+        "view": "Minecraft",
+        "plugin": "xyz.jpenilla.run-paper",
+        "label": "Paper (run-paper)",
+        "tasks": [
+          {
+            "name": "runServer",
+            "label": "Run server",
+            "requiresEula": true,
+            "runDir": "run"
+          }
+        ]
+      }
     ]
   }
 }

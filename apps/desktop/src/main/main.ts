@@ -30,6 +30,7 @@ import { ExtensionService } from './ext/service';
 import { PERMISSIONS, type Permission } from '@nova/extension-api';
 import { installBundled, isBundledSource } from './ext/bundled';
 import { TemplateService } from './templates/service';
+import { detectRunTasks, missingEula, writeEula, type RunTaskContribution } from './runTasks';
 
 const CSP = [
   "default-src 'self'",
@@ -64,6 +65,8 @@ let ai: AiService;
 async function aiCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('AI_ERROR', e instanceof Error ? e.message : String(e)); } }
 let extStore: ExtensionStore;
 let templates: TemplateService;
+const runTaskContribs = async (): Promise<RunTaskContribution[]> => (await extStore.list()).filter((x) => x.entry.enabled)
+  .flatMap((x) => x.manifest.contributes.gradleRunTasks.map((g) => ({ extId: x.id, extName: x.manifest.displayName, ...g })));
 async function tplCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('TEMPLATE_ERROR', e instanceof Error ? e.message : String(e)); } }
 /** First-party extensions shipped with the app: packaged → resources/bundled-extensions; dev → repo extensions/bundled. */
 const bundledDir = () => process.env.NOVA_BUNDLED_EXTENSIONS_DIR ? path.resolve(process.env.NOVA_BUNDLED_EXTENSIONS_DIR)
@@ -242,6 +245,8 @@ const handlers: Handlers = {
   'gradle.run.v1': async ({ args }) => {
     const root = (await requireTrust()).root; const info = await detectGradle(root);
     if (!info.isGradle) throw new AppError('NOT_FOUND', 'Not a Gradle project');
+    const noEula = await missingEula(root, args, await detectRunTasks(root, await runTaskContribs()));
+    if (noEula.length) throw new AppError('CONFLICT', `Minecraft EULA not accepted for ${noEula.join(', ')}/ — accept it in the Minecraft view before running the server (NOVA never accepts it for you)`);
     const runId = ++gradleSeq;
     const p = runGradle(root, info, args, await gradleEnv(root), (data) => emit('gradle.output.v1', { runId, data }),
       (code, signal, problems) => { const killed = gradleKilled.delete(runId); gradleRuns.delete(runId); emit('gradle.exit.v1', { runId, code, signal, killed, problems }); });
@@ -326,6 +331,13 @@ const handlers: Handlers = {
   'ext.treeChildren.v1': async ({ viewId, element }) => extCall(() => exts.treeChildren(viewId, element)) as never,
   'ext.permissionAnswer.v1': async ({ requestId, grant, remember }) => { permWaiters.get(requestId)?.({ grant, remember }); permWaiters.delete(requestId); return null; },
   'ext.restartHost.v1': async () => extCall(async () => { await exts.restartHost(); return null; }),
+  'runTasks.detect.v1': async () => detectRunTasks(needWs().root, await runTaskContribs()),
+  'runTasks.acceptEula.v1': async ({ runDir }) => { // only reachable from the explicit EULA consent dialog
+    const root = needWs().root;
+    const allowed = (await detectRunTasks(root, await runTaskContribs())).some((d) => d.tasks.some((t) => t.requiresEula && t.runDir === runDir));
+    if (!allowed) throw new AppError('INVALID_REQUEST', 'No EULA-gated run task uses that folder');
+    return { path: await writeEula(root, runDir) };
+  },
   'template.list.v1': async () => tplCall(() => templates.list()),
   'template.resolve.v1': async ({ key, refresh }) => tplCall(() => templates.resolve(key, refresh)),
   'template.pickLocation.v1': async () => {

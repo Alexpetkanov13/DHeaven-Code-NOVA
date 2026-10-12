@@ -247,3 +247,11 @@ pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-
 .btn.link { background: none; border: none; color: var(--nova-cyan, #4cc9f0); cursor: pointer; padding: 0 4px; }
 .wizard .badge.ok { color: #7CF2C1; border-color: rgba(124,242,193,.5); text-decoration: none; }
 .wizard .badge.warn { color: #FFC66D; border-color: rgba(255,198,109,.6); text-decoration: none; }
+/* Minecraft view */
+.mc-view .pad { padding: 4px 10px; }
+.mc-group { padding: 6px 10px; border-bottom: 1px solid var(--nova-border); }
+.mc-group ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.mc-task { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.mc-task .mc-name { flex: 1; } .mc-task code { opacity: .7; font-size: 11px; }
+.mc-task .ok { color: #7CF2C1; } .mc-task .warn { color: #FFC66D; }
+.mc-run { padding: 6px 10px; } .mc-run .gradle-out { max-height: 260px; overflow: auto; font-size: 11px; white-space: pre-wrap; }

@@ -116,6 +116,7 @@ export interface ExtContributions {
   gradleRunTasks: (ExtBase & { view: string; plugin: string; label: string; tasks: { name: string; label: string; requiresEula: boolean; runDir: string }[] })[];
   status: ExtStatusItem[];
 }
+export interface DetectedRunTasks { extId: string; view: string; label: string; plugin: string; buildFile: string; tasks: { name: string; label: string; requiresEula: boolean; runDir: string; eulaAccepted: boolean | null }[] }
 export interface TemplateInfo { key: string; extId: string; extName: string; id: string; label: string; description: string; resolver: string }
 export interface TemplateResolution { resolver: string; source: 'live' | 'offline-fallback'; note: string; versions: { minecraft: string; javaMajor: number; deps: Record<string, string> }[]; shared: Record<string, string>; errors: string[] }
 export interface ExtTreeItem { id?: string; label: string; description?: string; tooltip?: string; collapsible?: boolean; command?: string; element?: unknown }
@@ -268,6 +269,8 @@ export const channels = {
   'ext.treeChildren.v1': def(z.object({ viewId: z.string().max(128), element: z.unknown().optional() }), z.custom<ExtTreeItem[]>()),
   'ext.permissionAnswer.v1': def(z.object({ requestId: z.number().int(), grant: z.enum(['granted', 'denied']), remember: z.boolean() }), z.null()),
   'ext.restartHost.v1': def(z.object({}), z.null()),
+  'runTasks.detect.v1': def(z.object({}), z.custom<DetectedRunTasks[]>()),
+  'runTasks.acceptEula.v1': def(z.object({ runDir: z.string().max(512).regex(/^[A-Za-z0-9_.\/-]+$/).refine((p) => !p.split('/').includes('..')) }), z.object({ path: z.string() })),
   'template.list.v1': def(z.object({}), z.custom<TemplateInfo[]>()),
   'template.resolve.v1': def(z.object({ key: z.string().max(300), refresh: z.boolean().optional() }), z.custom<TemplateResolution>()),
   'template.pickLocation.v1': def(z.object({}), z.string().nullable()),
