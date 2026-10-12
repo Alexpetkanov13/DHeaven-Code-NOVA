@@ -17,7 +17,7 @@
     "lint": "eslint src e2e",
     "test": "vitest run",
     "e2e": "playwright test",
-    "dist:win": "pnpm build && electron-builder --win nsis portable zip --x64",
+    "dist:win": "pnpm build && electron-builder --win --x64",
     "dist:linux": "pnpm build && electron-builder --linux AppImage tar.gz"
   },
   "dependencies": {},
@@ -41,5 +41,6 @@
     "vite": "^8.3.4",
     "vitest": "^5.0.4",
     "zod": "^4.6.6"
-  }
+  },
+  "desktopName": "dheaven-code-nova.desktop"
 }

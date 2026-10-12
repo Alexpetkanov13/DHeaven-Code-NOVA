@@ -1,13 +1,23 @@
 appId: com.dheaven.code.nova
 productName: DHeaven Code NOVA
+executableName: dheaven-code-nova
 copyright: Copyright © 2026 DHeaven
 directories: { output: release, buildResources: build }
 files: [dist/**/*, package.json, "!dist/**/*.map"]
 asar: true
+artifactName: "DHeaven-Code-NOVA-${version}-${os}-${arch}.${ext}"
 win:
   target: [nsis, portable, zip]
   icon: build/icon.png
-  artifactName: "DHeaven-Code-NOVA-${version}-${arch}-${target}.${ext}"
-nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true, createDesktopShortcut: true }
-portable: { artifactName: "DHeaven-Code-NOVA-${version}-portable.exe" }
-linux: { target: [AppImage, tar.gz], category: Development, icon: build/icon.png }
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  artifactName: "DHeaven-Code-NOVA-${version}-setup-${arch}.${ext}"
+portable: { artifactName: "DHeaven-Code-NOVA-${version}-portable-${arch}.${ext}" }
+linux:
+  target: [AppImage, tar.gz]
+  category: Development
+  icon: build/icon.png
+  syncDesktopName: true
