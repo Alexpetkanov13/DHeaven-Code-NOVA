@@ -31,7 +31,7 @@ interface Entry { def: ServerDef; logs: string[]; conn: LspConnection | null; cr
 export interface ManagerDeps {
   serversDir: string; storageDir: string;
   isTrusted(root: string): Promise<boolean>;
-  jdkFor(root: string, minMajor: number): Promise<Jdk | null>;
+  jdkFor(root: string, minMajor: number, maxMajor?: number): Promise<Jdk | null>;
   emit(name: 'lsp.status.v1' | 'lsp.diagnostics.v1', payload: unknown): void;
 }
 
@@ -79,8 +79,8 @@ export class LspManager {
     const block = (reason: string) => { e.state = 'blocked'; e.reason = reason; this.publish(); return null; };
     if (!(await this.deps.isTrusted(this.root))) return block('Workspace is not trusted (Restricted Mode).');
     if (!(await def.isInstalled(this.deps.serversDir))) return block('Not installed. Install it from the Language Servers view.');
-    const jdk = await this.deps.jdkFor(this.root, def.minJava);
-    if (!jdk) return block(`Needs a JDK ${def.minJava}+; select one in the Language Servers view.`);
+    const jdk = await this.deps.jdkFor(this.root, def.minJava, def.maxJava);
+    if (!jdk) return block(`Needs a JDK ${def.minJava}${def.maxJava ? `–${def.maxJava}` : '+'}; select one in the Language Servers view.`);
     void this.spawn(e, jdk);
     return null;
   }

@@ -47,13 +47,14 @@ let lsp: LspManager;
 const serversDir = () => (process.env.NOVA_SERVERS_DIR ? path.resolve(process.env.NOVA_SERVERS_DIR) : path.join(app.getPath('userData'), 'servers'));
 let wsSettings: WorkspaceSettingsStore;
 /** Effective JDK: workspace override → global setting → newest discovered. Returns null if none satisfies minMajor. */
-async function jdkFor(root: string, minMajor: number): Promise<Jdk | null> {
+async function jdkFor(root: string, minMajor: number, maxMajor = Infinity): Promise<Jdk | null> {
+  const ok = (j: Jdk) => j.major >= minMajor && j.major <= maxMajor;
   const chosen = (await wsSettings.get(root)).javaHome ?? (await store.getSettings()).javaHome;
   if (chosen) {
     const j = await probeJdk(chosen, 'selected');
-    if (j && j.major >= minMajor) return j;
+    if (j && ok(j)) return j;
   }
-  return (await discoverJdks(chosen ? [chosen] : [])).find((j) => j.major >= minMajor) ?? null;
+  return (await discoverJdks(chosen ? [chosen] : [])).find(ok) ?? null;
 }
 const ptys = new Set<number>();
 const searches = new Set<number>();

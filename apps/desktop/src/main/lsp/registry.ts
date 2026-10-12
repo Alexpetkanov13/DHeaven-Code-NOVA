@@ -7,6 +7,8 @@ import type { LaunchSpec } from './server';
 export type ServerId = 'jdtls' | 'kotlin-ls';
 export interface ServerDef {
   id: string; name: string; languages: string[]; version: string; minJava: number;
+  /** Highest JDK major the server is known to run on (inclusive); undefined = no limit. */
+  maxJava?: number;
   download: { url: string; sha256: string; kind: 'tar.gz' | 'zip'; sizeHint: string; license: string };
   installDir(serversDir: string): string;
   isInstalled(serversDir: string): Promise<boolean>;
@@ -52,7 +54,7 @@ export const SERVERS: Record<ServerId, ServerDef> = {
     limitations: 'Server-initiated workspace/applyEdit is not yet supported, so some code actions that rely on it will report "not applied".',
   },
   'kotlin-ls': {
-    id: 'kotlin-ls', name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11,
+    id: 'kotlin-ls', name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11, maxJava: 21,
     download: { url: 'https://github.com/fwcd/kotlin-language-server/releases/download/1.3.13/server.zip', sha256: '4fe7d71d087b307c7869036171bd9d8c6a4284cd7c25b89098b0a24eb2d9b6d2', kind: 'zip', sizeHint: '~90 MB', license: 'MIT' },
     installDir: (d) => path.join(d, 'kotlin-ls'),
     isInstalled: async (d) => exists(path.join(d, 'kotlin-ls', 'server', 'bin', 'kotlin-language-server')),
@@ -63,7 +65,7 @@ export const SERVERS: Record<ServerId, ServerDef> = {
       await fs.mkdir(path.join(storageDir, 'kotlin-ls'), { recursive: true });
       return { command: bin, args: [], cwd: root, env };
     },
-    limitations: 'fwcd/kotlin-language-server is community-maintained and lags Kotlin 2.x; Gradle project import is slow and may resolve only part of the classpath. JetBrains kotlin-lsp is currently distributed as a VS Code bundle (.vsix) and is not integrated yet.',
+    limitations: 'fwcd/kotlin-language-server is community-maintained and lags Kotlin 2.x (embeds the Kotlin 2.1.0 compiler) and crashes at startup on JDKs whose version string it cannot parse (e.g. 25.0.4.1), so NOVA runs it on JDK 11–21; Gradle project import is slow and may resolve only part of the classpath. JetBrains kotlin-lsp is currently distributed as a VS Code bundle (.vsix) and is not integrated yet.',
   },
 };
 export const serverForLanguage = (lang: string): ServerDef | undefined => Object.values(SERVERS).find((s) => s.languages.includes(lang));
