@@ -1,0 +1,27 @@
+{
+  "name": "@nova/extension-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DHeaven Code: NOVA extension API, manifest schema and packaging tools (nova-ext).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": { "nova-ext": "bin/nova-ext.cjs" },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.0",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.4"
+  }
+}

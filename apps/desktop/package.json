@@ -2,7 +2,7 @@
   "name": "@nova/desktop",
   "productName": "DHeaven Code NOVA",
   "version": "0.1.0",
-  "description": "DHeaven Code: NOVA — Build Beyond Limits.",
+  "description": "DHeaven Code: NOVA \u2014 Build Beyond Limits.",
   "author": "DHeaven",
   "license": "UNLICENSED",
   "private": true,
@@ -21,6 +21,7 @@
     "dist:linux": "pnpm build && electron-builder --linux AppImage tar.gz"
   },
   "devDependencies": {
+    "@nova/extension-api": "workspace:*",
     "@nova/ipc-contract": "workspace:*",
     "@playwright/test": "^1.64.0",
     "@types/node": "^22.9.0",
