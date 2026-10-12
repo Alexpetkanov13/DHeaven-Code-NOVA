@@ -1,0 +1,27 @@
+{
+  "colors": {
+    "editor.background": "#1E1020",
+    "editor.foreground": "#FFE8D6",
+    "editorLineNumber.foreground": "#8A5A6B",
+    "editorCursor.foreground": "#FF9E64",
+    "editor.selectionBackground": "#5C2A4A",
+    "editor.lineHighlightBackground": "#2A1630"
+  },
+  "tokenColors": [
+    { "token": "comment", "foreground": "9A7A8A", "fontStyle": "italic" },
+    { "token": "keyword", "foreground": "FF7A90" },
+    { "token": "string", "foreground": "FFD27A" },
+    { "token": "number", "foreground": "FF9E64" },
+    { "token": "type", "foreground": "FFB3C6" }
+  ],
+  "workbench": {
+    "nova-graphite-900": "#1E1020",
+    "nova-graphite-800": "#26142A",
+    "nova-navy-900": "#2E1531",
+    "nova-border": "#4A2440",
+    "nova-cyan": "#FF9E64",
+    "nova-violet": "#FF7A90",
+    "nova-text": "#FFE8D6",
+    "nova-text-dim": "#C9A3B4"
+  }
+}

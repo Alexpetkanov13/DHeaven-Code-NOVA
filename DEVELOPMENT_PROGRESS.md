@@ -1,8 +1,35 @@
 # Development Progress
 
-## Status: Phases 1–4 (… + Java debugging via DAP, JUnit 5 test explorer) — verified on Linux; Windows untested
+## Status: Phases 1–4 + 6 (… + Java debugging via DAP, JUnit 5 test explorer, extensions platform) — verified on Linux; Windows untested. Phase 5 not started
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
+
+## Phase 6 verification — extensions platform (2026-10-12)
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build / cargo | `pnpm typecheck`, `pnpm lint`, `pnpm build`, `cargo test --release` | PASS (cargo: 7) |
+| Unit tests | `pnpm -r test` | PASS: contract 4, extension-api 11, desktop 58 (+1 skipped, the real-adapter DAP test that needs `NOVA_SERVERS_DIR`) |
+| extension-api unit | (part of the above) | manifest schema + cross-references, engine ranges, permissions/`checkCapability`, zip-slip names (`..`, absolute, drive, backslash, NUL, reserved, trailing dot), case-insensitive duplicates, size limits, integrity tamper/extra/missing; CLI validate + pack for all 3 examples, bad manifest → exit 1 with messages |
+| Host/service/store integration (real host process) | `npx vitest run src/main/ext` | PASS 8 (~7 s): activation + command + output + status + message + tree + timings; Restricted Mode blocks code; permission prompt grant/deny/undeclared; `require('fs')` blocked; hang → host killed, culprit quarantined, host restarts, others keep working; activate throw isolated; install with sidecar, update, rollback, disable persisted, tampered sidecar refused, uninstall; engine mismatch rejected with nothing written. Run 6× in a row after fixing an unhandled `ERR_IPC_CHANNEL_CLOSED` (send after host exit) |
+| Theme sanitiser | `src/renderer/lib/themeSanitize.test.ts` | PASS: only hex colours, allowlisted CSS vars and token names survive |
+| Extensions E2E | `pnpm e2e e2e/extensions.spec.ts` | PASS 3/3 (~12 s; passed 5 consecutive full runs after the race fixes below). (1) install hello-world `.novaext` (packed by `nova-ext`, sidecar) via confirm dialog showing SHA-256 → Active (onStartupFinished, timing shown); palette *Hello World: Say Hello* → output channel "Hello World" shows `Hello, NOVA! (said 1 time)`, status item `👋 Hello ×1`, toast; clicking the status item runs it again; install custom-theme + sample-language from folders; `demo.nvs` opens as `novascript`, Monarch tokenises `fn` as a keyword; *Color Theme: NOVA Sunset* → `--nova-cyan` = `#FF9E64`, Monaco background `rgb(30,16,32)`, keyword colour changes to the theme's; `beyond` snippet offered; choice persisted to settings. (2) bad-crash `bad.hang` (3 s timeout in test) → quarantined, host pid changes, hello-world still works, editor still editable, quarantined command refused with `EXT_ERROR`. (3) net-peeker: prompt → Deny → `DENIED: Permission 'workspace.read' was denied by the user`; undeclared `network` denied without a prompt; session deny holds without re-prompting; reset to Ask → prompt → Allow + Remember → README read; set to Deny in the view → denied without prompt |
+| All E2E | `NOVA_E2E_NO_SANDBOX=1 NOVA_SERVERS_DIR=~/nova-servers pnpm e2e` | PASS: 12/12 (5.3 min) |
+| CLI by hand | `nova-ext validate extensions/examples/hello-world`, `pack …/custom-theme`, `validate x.novaext` | OK (sha256 printed and matched) |
+| Packaged app (asar unpack of the host) | — | NOT RUN |
+| Windows | — | NOT RUN |
+
+Screenshot: `/workspace/nova-extensions.png`.
+
+Bugs found by the E2E and fixed: renderer refresh snapshots overwrote newer status/output events (stale status bar / output); post-crash restart timer and a user command started the host twice and raced activation (now one shared start promise and one in-flight activation per extension).
+
+### Phase 6 limitations
+- **Host is not `utilityProcess`** (it ignores `--permission`); it is the Electron binary in Node mode with Node's permission model. See ADR-0015.
+- **Network is restricted only at the API level.** Node's permission model cannot block sockets, and the `vm` sandbox is not a security boundary: code that escapes it could open network connections (but still can't write files, read outside the extensions dir, or spawn processes).
+- One shared host: a hang in one extension restarts the host for all of them.
+- Not covered by E2E (implemented, unit-tested at service/store level or not at all): tree views (service test only), editor context-menu entries, tasks in the palette, editing extension settings, Enable/Disable/Uninstall/Rollback buttons (store/service level only), *Restart host*, `onLanguage`/`onView` activation from the UI, prompt timeout, `workspace.write`/`net.fetch`/`process.exec` happy paths.
+- No marketplace (by design), no publisher signatures, no TextMate grammars, no webviews, no extension-provided LSP/debuggers, no keybinding contributions, `when` clauses limited to `never` and `editorLangId == x`.
+- M2/M3 commits: `service.ts` (M2) type-imports `store.ts` (M3), and the M3 integration tests use the examples committed in M5, so individual intermediate commits don't type-check/test standalone.
 
 ## Phase 4 verification (2026-10-12)
 Box provisioning: microsoft/java-debug 0.53.1 plugin jar in `~/nova-servers/java-debug/0.53.1` (SHA-256 4f4778d4…9e24, the pin the in-app installer checks; Maven Central's SHA-1 matched). JUnit 5.11.4 resolved by Gradle from Maven Central.
@@ -83,11 +110,11 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 - Replace All writes to disk; open dirty tabs for those files are flagged, not merged.
 - Terminal: one session at a time ("New Terminal" restarts it). No tabs or split terminals yet. Shell = $SHELL / COMSPEC.
 - Git: status/diff/stage/unstage/commit only. No branches, push/pull, discard, or hunk staging yet. Requires `git` on PATH.
-- Trust gates terminal, commit, language servers, Gradle runs, debugging and test runs. Extensions don't exist yet.
+- Trust gates terminal, commit, language servers, Gradle runs, debugging, test runs and extension code.
 - On a novad crash, the supervisor restarts it and open terminals end (reported as exited).
 - CSP allows `'unsafe-inline'` styles because Monaco needs them.
 - Installers are unsigned. App icon is generated from SVG by `apps/desktop/scripts/render-icon.cjs`.
 - Bundle includes all Monaco languages (large); lazy loading is planned.
 
 ## Next slice
-Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
+Phase 5 (not started), or for extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.

@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "name": "hello-world",
+  "publisher": "dheaven",
+  "displayName": "Hello World",
+  "description": "Example extension: a command, an output channel, a status bar item, a tree view, a setting and a task.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "engines": { "nova": "^0.1.0" },
+  "main": "extension.js",
+  "permissions": ["workspace.read"],
+  "activationEvents": ["onStartupFinished", "onCommand:hello.sayHello", "onCommand:hello.countFiles", "onView:hello.items"],
+  "contributes": {
+    "commands": [
+      { "command": "hello.sayHello", "title": "Say Hello", "category": "Hello World" },
+      { "command": "hello.countFiles", "title": "Count Files in Workspace Root (needs workspace.read)", "category": "Hello World" }
+    ],
+    "menus": { "editor/context": [{ "command": "hello.sayHello" }] },
+    "configuration": { "title": "Hello World", "properties": { "greeting": { "type": "string", "default": "Hello", "description": "Greeting used by Say Hello" } } },
+    "outputChannels": ["Hello World"],
+    "views": [{ "id": "hello.items", "name": "Hello Items" }],
+    "tasks": [{ "id": "hello.task", "label": "Say hello (task)", "command": "hello.sayHello" }]
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "Function": { "prefix": "fn", "body": ["fn ${1:name}(${2:args}) {", "\t${0:return 0}", "}"], "description": "Function declaration" },
+  "Beyond loop": { "prefix": "beyond", "body": ["while true {", "\t# build beyond limits", "\t$0", "}"], "description": "Endless loop" }
+}

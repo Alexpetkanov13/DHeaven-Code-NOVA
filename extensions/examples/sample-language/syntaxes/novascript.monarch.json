@@ -1,0 +1,13 @@
+{
+  "defaultToken": "",
+  "keywords": ["let", "fn", "return", "if", "else", "while", "true", "false", "beyond"],
+  "tokenizer": {
+    "root": [
+      ["#.*$", "comment"],
+      ["\"([^\"\\\\]|\\\\.)*\"", "string"],
+      ["\\b\\d+(\\.\\d+)?\\b", "number"],
+      ["[A-Z][A-Za-z0-9_]*", "type"],
+      ["[a-z_][A-Za-z0-9_]*", { "cases": { "@keywords": "keyword", "@default": "identifier" } }]
+    ]
+  }
+}

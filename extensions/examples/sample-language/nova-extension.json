@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "name": "sample-language",
+  "publisher": "dheaven",
+  "displayName": "NovaScript Language (sample)",
+  "description": "Example language contribution: file association, Monarch grammar, language configuration and snippets for .nvs files.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "engines": { "nova": "^0.1.0" },
+  "contributes": {
+    "languages": [{ "id": "novascript", "aliases": ["NovaScript"], "extensions": [".nvs"], "configuration": "language-configuration.json" }],
+    "grammars": [{ "language": "novascript", "format": "monarch", "path": "syntaxes/novascript.monarch.json" }],
+    "snippets": [{ "language": "novascript", "path": "snippets/novascript.json" }]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "name": "custom-theme",
+  "publisher": "dheaven",
+  "displayName": "NOVA Sunset Theme",
+  "description": "Example color theme contribution: editor colors, token colors and workbench (shell) colors.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "engines": { "nova": "^0.1.0" },
+  "contributes": {
+    "themes": [{ "id": "sunset", "label": "NOVA Sunset", "uiTheme": "vs-dark", "path": "themes/sunset.json" }]
+  }
+}
