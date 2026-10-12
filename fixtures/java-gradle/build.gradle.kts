@@ -14,3 +14,10 @@ java {
 application {
     mainClass.set("com.dheaven.demo.App")
 }
+
+// Long-running task used by NOVA's E2E to exercise Kill (cancels the run and its process tree).
+tasks.register("sleepDemo") {
+    group = "demo"
+    description = "Sleeps for 5 minutes (used to test cancel/kill)"
+    doLast { Thread.sleep(300_000) }
+}

@@ -14,6 +14,8 @@ import { parentOf, joinRel, joinAbs, uriToRel } from './lib/paths';
 import { LspBridge } from './lib/lsp';
 import { applyTextEdits } from './lib/textEdits';
 import { LanguageServersView } from './components/LanguageServersView';
+import { GradleView } from './components/GradleView';
+import type { GradleProblem } from '@nova/ipc-contract';
 import { JdkPanel } from './components/JdkPanel';
 import { ProblemsPanel, type ProblemItem } from './components/ProblemsPanel';
 import logo from './logo.svg';
@@ -21,7 +23,7 @@ import logo from './logo.svg';
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm' | 'lsp';
+type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle';
 type Dialog =
   | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
   | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
@@ -61,6 +63,16 @@ export function App() {
   const activeRef = useRef(active); activeRef.current = active;
   const childrenRef = useRef(children); childrenRef.current = children;
   const wsRef = useRef(ws); wsRef.current = ws;
+  const onGradleProblems = useCallback((ps: GradleProblem[]) => setProblems((m) => {
+    const n = new Map([...m].filter(([k]) => !k.startsWith('gradle|')));
+    const root = wsRef.current?.root;
+    for (const p of ps) {
+      const rel = root ? uriToRel(monaco.Uri.parse(p.uri).fsPath, root) : null; if (rel === null) continue;
+      const key = `gradle|${p.uri}`;
+      n.set(key, [...(n.get(key) ?? []), { uri: p.uri, rel, line: p.line, col: p.col, severity: p.severity, message: p.message, source: p.source }]);
+    }
+    return n;
+  }), []);
   const modelUri = (rel: string) => monaco.Uri.file(joinAbs(wsRef.current!.root, rel));
   const bridgeRef = useRef<LspBridge | null>(null);
 
@@ -408,6 +420,7 @@ export function App() {
           <button className={view === 'search' && showSidebar ? 'on' : ''} title="Search (Ctrl+Shift+F)" aria-label="Search" onClick={() => showView('search')}>⌕</button>
           <button className={view === 'scm' && showSidebar ? 'on' : ''} title="Source Control (Ctrl+Shift+G)" aria-label="Source Control" onClick={() => showView('scm')}>⑂</button>
           <button className={view === 'lsp' && showSidebar ? 'on' : ''} title="Language Servers" aria-label="Language Servers" onClick={() => showView('lsp')}>◇</button>
+          <button className={view === 'gradle' && showSidebar ? 'on' : ''} title="Gradle" aria-label="Gradle" onClick={() => showView('gradle')}>▲</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -415,7 +428,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -431,6 +444,8 @@ export function App() {
                 <Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} />
               ) : view === 'search' ? (
                 <SearchView onOpen={(r, l, c) => void openFile(r, l, c)} onError={fail} onLog={out} />
+              ) : view === 'gradle' ? (
+                <GradleView trusted={trusted} hasWorkspace={!!ws} onError={fail} onProblems={onGradleProblems} />
               ) : view === 'lsp' ? (
                 <LanguageServersView trusted={trusted} onError={fail} askInstall={(sv) => setDialog({
                   kind: 'confirm', confirmLabel: 'Download and Install',

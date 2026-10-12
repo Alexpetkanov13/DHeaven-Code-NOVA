@@ -56,9 +56,12 @@ export interface Events {
   'lsp.status.v1': { servers: ServerStatus[] };
   'lsp.diagnostics.v1': { serverId: string; uri: string; diagnostics: LspDiagnostic[] };
   'lsp.install.v1': { serverId: string; message: string; done?: boolean; error?: boolean };
+  'gradle.output.v1': { runId: number; data: string };
+  'gradle.exit.v1': { runId: number; code: number | null; signal: string | null; killed: boolean; problems: GradleProblem[] };
   'daemon.status.v1': { state: 'starting' | 'ready' | 'restarting' | 'failed'; message?: string };
 }
 export type EventName = keyof Events;
+export interface GradleProblem { uri: string; line: number; col: number; severity: 'error' | 'warning'; message: string; source: string }
 
 export const ServerStatus = z.object({
   id: z.string(), name: z.string(), version: z.string(), languages: z.array(z.string()), installed: z.boolean(),
@@ -128,6 +131,10 @@ export const channels = {
     globalHome: z.string().nullable(), workspaceHome: z.string().nullable(), effective: z.string().nullable(),
   })),
   'jdk.select.v1': def(z.object({ home: z.string().max(4096).nullable(), scope: z.enum(['global', 'workspace']) }), z.null()),
+  'gradle.detect.v1': def(z.object({}), z.object({ isGradle: z.boolean(), wrapper: z.boolean(), buildFile: z.string().nullable() })),
+  'gradle.tasks.v1': def(z.object({}), z.array(z.object({ name: z.string(), group: z.string(), description: z.string() }))),
+  'gradle.run.v1': def(z.object({ args: z.array(z.string().max(512).regex(/^[^\0\r\n]*$/)).min(1).max(64) }), z.object({ runId: z.number() })),
+  'gradle.kill.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),

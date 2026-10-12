@@ -15,6 +15,8 @@ import { SERVERS } from './lsp/registry';
 import { installServer } from './lsp/installer';
 import { discoverJdks, probeJdk, type Jdk } from './jdk';
 import { WorkspaceSettingsStore } from './workspaceSettings';
+import type { ChildProcess } from 'node:child_process';
+import { detectGradle, killRun, listTasks, runGradle } from './gradle';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 
@@ -57,6 +59,14 @@ async function jdkFor(root: string, minMajor: number, maxMajor = Infinity): Prom
   return (await discoverJdks(chosen ? [chosen] : [])).find(ok) ?? null;
 }
 const ptys = new Set<number>();
+const gradleRuns = new Map<number, ChildProcess>();
+const gradleKilled = new Set<number>();
+let gradleSeq = 0;
+function killAllGradle() { for (const [id, p] of gradleRuns) { gradleKilled.add(id); killRun(p); } }
+async function gradleEnv(root: string): Promise<NodeJS.ProcessEnv> {
+  const jdk = await jdkFor(root, 17);
+  return jdk ? { ...process.env, JAVA_HOME: jdk.home, PATH: path.join(jdk.home, 'bin') + path.delimiter + (process.env.PATH ?? '') } : { ...process.env };
+}
 const searches = new Set<number>();
 
 function emit<E extends EventName>(name: E, payload: Events[E]) { win?.webContents.send('nova:event', name, payload); }
@@ -86,6 +96,7 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   catch { watcher = null; /* watching unsupported: tree refresh falls back to manual */ }
   await store.addRecent(workspace.root, workspace.name);
   win?.setTitle(`${workspace.name} — DHeaven Code: NOVA`);
+  killAllGradle();
   await lsp.setWorkspace(workspace.root);
   return workspace;
 }
@@ -139,7 +150,7 @@ const handlers: Handlers = {
   'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
   'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
   'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
-  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
+  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); killAllGradle(); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
   'lsp.status.v1': async () => lsp.status(),
   'lsp.logs.v1': async ({ serverId }) => [...lsp.logs(serverId)],
   'lsp.restart.v1': async ({ serverId }) => { await requireTrust(); await lsp.restart(serverId); return null; },
@@ -176,6 +187,22 @@ const handlers: Handlers = {
     if (workspace) for (const id of Object.keys(SERVERS)) if ((await lsp.status()).find((x) => x.id === id && x.state !== 'stopped' && x.state !== 'blocked')) await lsp.restart(id);
     return null;
   },
+  'gradle.detect.v1': async () => detectGradle(needWs().root),
+  'gradle.tasks.v1': async () => { // runs build scripts -> trust required
+    const root = (await requireTrust()).root; const info = await detectGradle(root);
+    if (!info.isGradle) throw new AppError('NOT_FOUND', 'Not a Gradle project');
+    return listTasks(root, info, await gradleEnv(root));
+  },
+  'gradle.run.v1': async ({ args }) => {
+    const root = (await requireTrust()).root; const info = await detectGradle(root);
+    if (!info.isGradle) throw new AppError('NOT_FOUND', 'Not a Gradle project');
+    const runId = ++gradleSeq;
+    const p = runGradle(root, info, args, await gradleEnv(root), (data) => emit('gradle.output.v1', { runId, data }),
+      (code, signal, problems) => { const killed = gradleKilled.delete(runId); gradleRuns.delete(runId); emit('gradle.exit.v1', { runId, code, signal, killed, problems }); });
+    gradleRuns.set(runId, p);
+    return { runId };
+  },
+  'gradle.kill.v1': async ({ runId }) => { const p = gradleRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
   'recent.list.v1': async () => store.listRecent(),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
@@ -268,4 +295,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+app.on('window-all-closed', () => { killAllGradle(); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });

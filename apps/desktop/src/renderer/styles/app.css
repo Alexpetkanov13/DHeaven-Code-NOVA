@@ -116,3 +116,18 @@ button { font: inherit; color: inherit; }
 .preview-list { max-height: 260px; overflow: auto; font-size: 12px; margin: 0; padding-left: 18px; }
 .term-out { font: 12px var(--nova-font-mono); white-space: pre-wrap; flex: 1; overflow: auto; padding: 0 12px 8px; margin: 0; }
 .ls-card select, .ls-card input[type=text] { max-width: 100%; width: 100%; }
+
+/* Gradle view */
+.gradle .pad { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.gradle .gradle-row { display: flex; gap: 6px; align-items: center; }
+.gradle .gradle-row input { flex: 1; min-width: 0; }
+.gradle .warn { color: #f5c26b; font-size: 12px; }
+.gradle-status { font-size: 12px; padding: 4px 6px; border-radius: 4px; background: rgba(255,255,255,0.05); }
+.gradle-status[data-run-state="done"][data-exit-code="0"] { color: #7ee2a8; }
+.gradle-status[data-run-state="done"]:not([data-exit-code="0"]) { color: #ff8a8a; }
+.gradle-tasks { max-height: 30%; overflow: auto; padding: 0 10px; font-size: 12px; }
+.gradle-tasks .file { margin-top: 6px; font-weight: 600; text-transform: capitalize; }
+.gradle-tasks .link { background: none; border: 0; color: #8fb8ff; cursor: pointer; padding: 0; font: inherit; }
+.gradle-tasks .link:disabled { color: #777; cursor: default; }
+.gradle-out { flex: 1; overflow: auto; margin: 6px 10px 10px; padding: 6px; background: #0b0f1a; font-size: 11px; white-space: pre-wrap; word-break: break-all; min-height: 120px; }
+.gradle { display: flex; flex-direction: column; height: 100%; }
