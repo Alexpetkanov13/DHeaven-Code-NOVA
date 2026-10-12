@@ -28,6 +28,7 @@ import type { Events } from '@nova/ipc-contract';
 import { AiClient, type PrepareReq } from './lib/ai';
 import { terminalQueue } from './lib/terminalQueue';
 import { AiView, AiPreviewDialog, InlineDiffDialog } from './components/AiView';
+import { NewProjectWizard } from './components/NewProjectWizard';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
@@ -55,6 +56,7 @@ export function App() {
   const [panelTab, setPanelTab] = useState<'output' | 'terminal' | 'problems' | 'debug'>('output');
   const [problems, setProblems] = useState(new Map<string, ProblemItem[]>());
   const [palette, setPalette] = useState(false);
+  const [wizard, setWizard] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -479,6 +481,7 @@ export function App() {
   }, [extClient.contributions, runExt, editorReady]);
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
+    { id: 'project.new', title: 'File: New Project…', run: () => setWizard(true) },
     { id: 'file.save', title: 'File: Save', keybinding: 'Ctrl+S', run: () => void save() },
     { id: 'file.saveAs', title: 'File: Save As…', keybinding: 'Ctrl+Shift+S', run: () => void saveAs() },
     { id: 'file.close', title: 'File: Close Editor', run: () => active && closeTab(active) },
@@ -630,6 +633,7 @@ export function App() {
                 <h1>DHeaven Code: NOVA</h1>
                 <div className="tag">Build Beyond Limits.</div>
                 <button className="btn" onClick={openFolder}>Open Folder…</button>
+                <button className="btn" onClick={() => setWizard(true)}>New Project…</button>
                 {recent.length > 0 && (
                   <ul className="recent" aria-label="Recent workspaces">
                     {recent.map((r) => <li key={r.root}><button onClick={() => void openRecent(r.root)}>{r.name}<small>{r.root}</small></button></li>)}
@@ -686,6 +690,7 @@ export function App() {
       </footer>
       {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); setTimeout(() => { if (!document.querySelector('.palette-backdrop')) editorRef.current?.focus(); }, 0); }} />}
       <AiPreviewDialog client={aiClient} />
+      {wizard && <NewProjectWizard onClose={() => setWizard(false)} onCreated={(root, open) => { setWizard(false); if (open) void openRecent(root); }} />}
       <InlineDiffDialog client={aiClient} onApply={applyInline} />
       {permReqs[0] && <PermissionPrompt key={permReqs[0].requestId} req={permReqs[0]} onAnswer={(grant, remember) => { const r = permReqs[0]!; setPermReqs((q) => q.slice(1)); void call('ext.permissionAnswer.v1', { requestId: r.requestId, grant, remember }).catch(fail); }} />}
       {toasts.length > 0 && <div className="toasts" aria-live="polite">{toasts.map((t) => <div key={t.id} className={`toast t-${t.level}`}>{t.text}</div>)}</div>}

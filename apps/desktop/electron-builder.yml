@@ -11,6 +11,9 @@ extraResources:
   - from: ../../target/release/
     to: .
     filter: [novad, novad.exe]
+  # First-party bundled extensions (installed on startup through the normal validation path).
+  - from: ../../extensions/bundled/
+    to: bundled-extensions
 artifactName: "DHeaven-Code-NOVA-${version}-${os}-${arch}.${ext}"
 win:
   target: [nsis, portable, zip]

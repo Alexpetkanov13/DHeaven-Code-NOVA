@@ -113,6 +113,8 @@ export interface ExtContributions {
   outputChannels: (ExtBase & { name: string })[];
   status: ExtStatusItem[];
 }
+export interface TemplateInfo { key: string; extId: string; extName: string; id: string; label: string; description: string; resolver: string }
+export interface TemplateResolution { resolver: string; source: 'live' | 'offline-fallback'; note: string; versions: { minecraft: string; javaMajor: number; deps: Record<string, string> }[]; shared: Record<string, string>; errors: string[] }
 export interface ExtTreeItem { id?: string; label: string; description?: string; tooltip?: string; collapsible?: boolean; command?: string; element?: unknown }
 export type EventName = keyof Events;
 export interface GradleProblem { uri: string; line: number; col: number; severity: 'error' | 'warning'; message: string; source: string }
@@ -263,6 +265,13 @@ export const channels = {
   'ext.treeChildren.v1': def(z.object({ viewId: z.string().max(128), element: z.unknown().optional() }), z.custom<ExtTreeItem[]>()),
   'ext.permissionAnswer.v1': def(z.object({ requestId: z.number().int(), grant: z.enum(['granted', 'denied']), remember: z.boolean() }), z.null()),
   'ext.restartHost.v1': def(z.object({}), z.null()),
+  'template.list.v1': def(z.object({}), z.custom<TemplateInfo[]>()),
+  'template.resolve.v1': def(z.object({ key: z.string().max(300), refresh: z.boolean().optional() }), z.custom<TemplateResolution>()),
+  'template.pickLocation.v1': def(z.object({}), z.string().nullable()),
+  'template.generate.v1': def(z.object({
+    key: z.string().max(300), minecraft: z.string().max(64).nullable(), parentDir: z.string().max(4096), folderName: z.string().max(64), javaHome: z.string().max(4096).nullable(),
+    options: z.object({ name: z.string().max(64), modId: z.string().max(64), package: z.string().max(200), author: z.string().max(64), description: z.string().max(200) }),
+  }), z.object({ root: z.string(), files: z.array(z.string()), javaMajor: z.number().nullable(), source: z.string() })),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),
 } as const;
@@ -272,7 +281,7 @@ export type ChannelName = keyof Channels;
 export type Req<C extends ChannelName> = z.input<Channels[C]['req']>;
 export type Res<C extends ChannelName> = z.output<Channels[C]['res']>;
 
-export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'AI_ERROR', 'INTERNAL']);
+export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'AI_ERROR', 'TEMPLATE_ERROR', 'INTERNAL']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export type Envelope<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string } };

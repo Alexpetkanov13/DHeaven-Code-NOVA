@@ -232,3 +232,18 @@ pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-
 .ai-hunk.d-accept { border-color: #7FF0C8; } .ai-hunk.d-reject { border-color: var(--nova-danger); opacity: .7; }
 .ai-hunk pre { margin: 4px 0; font-family: var(--nova-font-mono); font-size: 12px; white-space: pre; overflow: auto; }
 .btn.on { box-shadow: inset 0 0 0 1px var(--nova-danger); }
+/* New Project wizard */
+.palette.wizard { width: 720px; max-height: calc(100vh - 120px); overflow: auto; padding: 14px 16px; gap: 10px; }
+.wizard h3 { margin: 0; }
+.wizard-templates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.wizard-template { border: 1px solid var(--nova-border); border-radius: 8px; padding: 8px; cursor: pointer; }
+.wizard-template.sel { border-color: var(--nova-cyan, #4cc9f0); box-shadow: var(--nova-glow); }
+.wizard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.wizard-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.wizard-grid label.wide, .wizard-source { grid-column: 1 / -1; }
+.wizard-grid input, .wizard-grid select { background: var(--nova-navy-800, #111a33); color: inherit; border: 1px solid var(--nova-border); border-radius: 5px; padding: 4px 6px; }
+.wizard-grid .row { display: flex; gap: 6px; } .wizard-grid .row input { flex: 1; }
+.wizard-error { color: #ff8a8a; white-space: pre-wrap; font-size: 12px; }
+.btn.link { background: none; border: none; color: var(--nova-cyan, #4cc9f0); cursor: pointer; padding: 0 4px; }
+.wizard .badge.ok { color: #7CF2C1; border-color: rgba(124,242,193,.5); text-decoration: none; }
+.wizard .badge.warn { color: #FFC66D; border-color: rgba(255,198,109,.6); text-decoration: none; }

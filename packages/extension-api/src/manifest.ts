@@ -9,6 +9,10 @@ const CMD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 /** Paths inside the extension: relative, forward slashes, no `..`, no absolute/drive paths. */
 export const RelPath = z.string().min(1).max(512).refine((p) => !p.startsWith('/') && !/^[a-zA-Z]:/.test(p) && !p.includes('\\') && !p.split('/').some((s) => s === '..' || s === ''), 'must be a relative path inside the extension (no "..", no absolute paths, use "/")');
 
+/** Core-implemented version resolvers usable by contributed project templates. */
+export const TEMPLATE_RESOLVERS = ['fabric', 'paper', 'none'] as const;
+const FILE_GLOB = /^[A-Za-z0-9*._-]{1,128}$/;
+
 const ACTIVATION = /^(\*|onStartupFinished|onCommand:[A-Za-z0-9._-]+|onLanguage:[A-Za-z0-9_-]+|onView:[A-Za-z0-9._-]+)$/;
 
 export const Manifest = z.object({
@@ -43,9 +47,17 @@ export const Manifest = z.object({
     outputChannels: z.array(z.string().min(1).max(64)).max(20).default([]),
     views: z.array(z.object({ id: z.string().regex(CMD), name: z.string().min(1).max(100) })).max(20).default([]),
     tasks: z.array(z.object({ id: z.string().regex(CMD), label: z.string().min(1).max(200), command: z.string().regex(CMD) })).max(100).default([]),
-  }).default({ commands: [], menus: { commandPalette: [], 'editor/context': [] }, configuration: { properties: {} }, themes: [], languages: [], grammars: [], snippets: [], outputChannels: [], views: [], tasks: [] }),
+    /** New Project wizard templates: a folder of files rendered by the core engine; versions come from a core resolver. */
+    projectTemplates: z.array(z.object({ id: z.string().regex(CMD), label: z.string().min(1).max(100), description: z.string().max(500).default(''), path: RelPath, resolver: z.enum(TEMPLATE_RESOLVERS), wrapper: RelPath.optional() })).max(20).default([]),
+    /** JSON/YAML schema validation: fileMatch are file-name globs (`*` wildcard), schema is a JSON Schema file in the extension. */
+    jsonValidation: z.array(z.object({ fileMatch: z.array(z.string().regex(FILE_GLOB)).min(1).max(20), schema: RelPath })).max(50).default([]),
+    yamlValidation: z.array(z.object({ fileMatch: z.array(z.string().regex(FILE_GLOB)).min(1).max(20), schema: RelPath })).max(50).default([]),
+    /** Gradle run tasks surfaced in a core view when a build script applies `plugin`. requiresEula: Minecraft server EULA consent before running. */
+    gradleRunTasks: z.array(z.object({ view: z.string().min(1).max(50), plugin: z.string().regex(/^[A-Za-z0-9_.-]{1,128}$/), label: z.string().min(1).max(100), tasks: z.array(z.object({ name: z.string().regex(/^[A-Za-z][A-Za-z0-9_:-]{0,63}$/), label: z.string().min(1).max(100), requiresEula: z.boolean().default(false), runDir: RelPath.default('run') })).min(1).max(20) })).max(20).default([]),
+  }).default({ commands: [], menus: { commandPalette: [], 'editor/context': [] }, configuration: { properties: {} }, themes: [], languages: [], grammars: [], snippets: [], outputChannels: [], views: [], tasks: [], projectTemplates: [], jsonValidation: [], yamlValidation: [], gradleRunTasks: [] }),
 }).strict();
 export type Manifest = z.infer<typeof Manifest>;
+export type TemplateResolver = (typeof TEMPLATE_RESOLVERS)[number];
 export const extensionId = (m: Pick<Manifest, 'publisher' | 'name'>) => `${m.publisher}.${m.name}`;
 export const isExtensionId = (s: string) => ID.test(s);
 

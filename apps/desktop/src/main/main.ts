@@ -28,6 +28,8 @@ import { KeyStore } from './ai/keys';
 import { AiHistory } from './ai/history';
 import { ExtensionService } from './ext/service';
 import { PERMISSIONS, type Permission } from '@nova/extension-api';
+import { installBundled, isBundledSource } from './ext/bundled';
+import { TemplateService } from './templates/service';
 
 const CSP = [
   "default-src 'self'",
@@ -61,6 +63,11 @@ let exts: ExtensionService;
 let ai: AiService;
 async function aiCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('AI_ERROR', e instanceof Error ? e.message : String(e)); } }
 let extStore: ExtensionStore;
+let templates: TemplateService;
+async function tplCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('TEMPLATE_ERROR', e instanceof Error ? e.message : String(e)); } }
+/** First-party extensions shipped with the app: packaged → resources/bundled-extensions; dev → repo extensions/bundled. */
+const bundledDir = () => process.env.NOVA_BUNDLED_EXTENSIONS_DIR ? path.resolve(process.env.NOVA_BUNDLED_EXTENSIONS_DIR)
+  : app.isPackaged ? path.join(process.resourcesPath, 'bundled-extensions') : path.resolve(__dirname, '../../../../extensions/bundled');
 let wsTrusted = false;
 let permSeq = 0;
 const permWaiters = new Map<number, (a: { grant: 'granted' | 'denied'; remember: boolean }) => void>();
@@ -307,7 +314,10 @@ const handlers: Handlers = {
   'ext.install.v1': async ({ token }) => extCall(async () => { const x = await exts.install(token); return { id: x.id, version: x.manifest.version }; }),
   'ext.cancelInstall.v1': async ({ token }) => { extStore.cancel(token); return null; },
   'ext.setEnabled.v1': async ({ id, enabled }) => extCall(async () => { await exts.setEnabled(id, enabled); return null; }),
-  'ext.uninstall.v1': async ({ id }) => extCall(async () => { await exts.uninstall(id); return null; }),
+  'ext.uninstall.v1': async ({ id }) => extCall(async () => {
+    if (isBundledSource(extStore.get(id)?.source ?? '')) throw new AppError('EXT_ERROR', 'Bundled first-party extensions cannot be uninstalled; disable it instead');
+    await exts.uninstall(id); return null;
+  }),
   'ext.rollback.v1': async ({ id }) => extCall(async () => ({ version: (await exts.rollback(id)).manifest.version })),
   'ext.setGrant.v1': async ({ id, permission, grant }) => extCall(async () => { await exts.setGrant(id, permission, grant); return null; }),
   'ext.setConfig.v1': async ({ id, key, value }) => extCall(async () => { await exts.setConfig(id, key, value); return null; }),
@@ -316,6 +326,22 @@ const handlers: Handlers = {
   'ext.treeChildren.v1': async ({ viewId, element }) => extCall(() => exts.treeChildren(viewId, element)) as never,
   'ext.permissionAnswer.v1': async ({ requestId, grant, remember }) => { permWaiters.get(requestId)?.({ grant, remember }); permWaiters.delete(requestId); return null; },
   'ext.restartHost.v1': async () => extCall(async () => { await exts.restartHost(); return null; }),
+  'template.list.v1': async () => tplCall(() => templates.list()),
+  'template.resolve.v1': async ({ key, refresh }) => tplCall(() => templates.resolve(key, refresh)),
+  'template.pickLocation.v1': async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Choose where to create the project', properties: ['openDirectory', 'createDirectory'] });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  },
+  'template.generate.v1': async ({ javaHome, ...req }) => tplCall(async () => {
+    const g = await templates.generate(req);
+    if (javaHome) { // per-project JDK selection: must satisfy the Minecraft version's Java requirement
+      const j = await probeJdk(javaHome, 'selected');
+      if (!j) throw new AppError('TEMPLATE_ERROR', `Not a JDK: ${javaHome}`);
+      if (g.javaMajor && j.major < g.javaMajor) throw new AppError('TEMPLATE_ERROR', `JDK ${j.major} is older than the required Java ${g.javaMajor}`);
+      await wsSettings.set(g.root, { javaHome: j.home });
+    }
+    return { root: g.root, files: g.files, javaMajor: g.javaMajor, source: g.resolution.source };
+  }),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
 };
@@ -414,6 +440,14 @@ app.whenReady().then(async () => {
   });
   extStore = new ExtensionStore(extDir(), app.getVersion());
   await extStore.load();
+  await installBundled(extStore, bundledDir(), (m) => console.log(`[ext] ${m}`));
+  templates = new TemplateService({
+    fetch: (u) => net.fetch(u),
+    templates: async () => (await extStore.list()).filter((x) => x.entry.enabled).flatMap((x) => x.manifest.contributes.projectTemplates.map((t) => ({
+      key: `${x.id}/${t.id}`, extId: x.id, extName: x.manifest.displayName, id: t.id, label: t.label, description: t.description, resolver: t.resolver,
+      dir: path.join(x.dir, t.path), wrapperDir: t.wrapper ? path.join(x.dir, t.wrapper) : null,
+    }))),
+  });
   exts = new ExtensionService({
     store: extStore, hostScript: path.join(__dirname, 'extension-host.cjs').replace('app.asar', 'app.asar.unpacked'),
     workspace: () => (workspace ? { root: workspace.root, trusted: wsTrusted } : null),
