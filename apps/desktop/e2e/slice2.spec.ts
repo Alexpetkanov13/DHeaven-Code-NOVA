@@ -10,10 +10,13 @@ const shots = process.env.NOVA_SHOT_DIR;
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' });
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
 
-async function confirmOrPermanent(page: Page) {
+async function confirmOrPermanent(page: Page, rel: string) {
   await page.getByRole('button', { name: 'Move to Trash' }).click();
+  // Trash can fail in containers (no trash dir); then NOVA asks to delete permanently. That fallback can
+  // take several seconds on a loaded box, so wait until either the dialog appears or the dialog layer closes.
   const perm = page.getByRole('button', { name: 'Delete Permanently' });
-  if (await perm.isVisible({ timeout: 3000 }).catch(() => false)) await perm.click();
+  await expect.poll(async () => (await perm.isVisible()) || (await page.locator(`.tree [data-rel="${rel}"]`).count()) === 0, { timeout: 30_000 }).toBe(true);
+  if (await perm.isVisible()) await perm.click();
 }
 
 test('explorer ops, watcher, search/replace, terminal, git stage+commit, trust', async () => {
@@ -53,7 +56,7 @@ test('explorer ops, watcher, search/replace, terminal, git stage+commit, trust',
   expect(await exists(path.join(ws, 'renamed.md'))).toBe(true);
   await page.locator('.tree [data-rel="renamed.md"]').click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Delete' }).click();
-  await confirmOrPermanent(page);
+  await confirmOrPermanent(page, 'renamed.md');
   await expect(page.locator('.tree [data-rel="renamed.md"]')).toHaveCount(0);
   expect(await exists(path.join(ws, 'renamed.md'))).toBe(false);
   await expect(page.locator('.tab[data-rel="renamed.md"] [data-disk="deleted"]')).toBeVisible();

@@ -1,8 +1,36 @@
 # Development Progress
 
-## Status: Phase 1 + Slice 2 (explorer ops, watcher, novad search/terminal/Git, trust) — verified on Linux; Windows untested
+## Status: Phase 1 + Slice 2 + Phase 3 (LSP client, Java/JDT LS, Kotlin best-effort, Gradle) — verified on Linux; Windows untested
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
+
+## Phase 3 verification (2026-10-12)
+Box provisioning (outside the repo): Temurin JDK 21.0.12 in `~/.jdks`, JDT LS 1.61.0 and fwcd kotlin-language-server 1.3.13 pre-provisioned in `~/nova-servers` (`NOVA_SERVERS_DIR`; same pinned SHA-256 the in-app installer checks), Gradle 9.7.1 via the fixtures' wrapper. A JDK 25.0.4.1 is also on the box.
+
+| Check | Command | Result |
+|---|---|---|
+| Rust tests | `cargo test --release` | PASS: 7 (unchanged) |
+| Typecheck / lint / build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | PASS |
+| Unit tests | `pnpm test` | PASS: desktop 40 + contract. New: JSON-RPC framing (split/multi frames, UTF-8), URI canonicalisation, LspConnection + LspManager vs a fake stdio server (init, responses, cancellation, crash survival; trust gating, doc sync, diagnostics routing, restart after crash; static+dynamic capability badges). Crash-loop → `failed` has no unit test but was observed for real (kotlin-ls on JDK 25, before the fix), text edits/UTF-16 offsets, JDK probing/discovery, Gradle task + javac/kotlinc problem parsing (incl. dedupe of Gradle's repeated compiler output) |
+| Java E2E (real JDT LS) | `NOVA_SERVERS_DIR=~/nova-servers pnpm e2e e2e/java.spec.ts` | PASS (~55 s): select JDK 21 → JDT LS ready, badges from real capabilities; typed `int broken = "oops";` → "Type mismatch" in Problems + squiggle; completion lists `greet`; F12 opens Greeter.java; SIGKILL server → editor stays editable, state restarting → ready with new pid, diagnostics come back, logs show exit |
+| Gradle E2E | `pnpm e2e e2e/gradle.spec.ts` | PASS (~36 s): detects build.gradle.kts + wrapper; tasks listed via `gradlew tasks --all`; `build` streams output, `BUILD SUCCESSFUL`, exit code 0; deliberate javac error → `compileJava` exit ≠ 0, 1 `[javac]` problem in Problems at App.java:5; `sleepDemo` killed from the UI → "Killed" |
+| Kotlin E2E (best effort) | `pnpm e2e e2e/kotlin.spec.ts` | PASS: kotlin-ls reaches ready on JDK 21 with completion/hover/signatureHelp/definition/references/rename/formatting/codeActions advertised; type-mismatch diagnostic shown; completion lists `greet`. Diagnostic/completion checks are soft assertions by design. Observed false positive: "Unresolved reference: println" (server's bundled Kotlin 2.1.0 vs project Kotlin 2.4.21) |
+| Fixtures | `./gradlew run` in fixtures/java-gradle and fixtures/kotlin-gradle | PASS: both print `Hello, NOVA!` |
+| Previous E2E (workbench, slice2) | `pnpm e2e` | PASS (slice2 test made robust to a slow trash→permanent-delete fallback; product code unchanged) |
+| In-app download/install of servers | — | NOT RUN end-to-end against the network in tests (servers pre-provisioned per the brief). Consent dialog + SHA-256 verify paths are implemented |
+| Windows (cmd.exe wrappers, `taskkill /T`, gradlew.bat) | — | NOT RUN: no Windows host |
+
+Screenshots: `/workspace/nova-java.png`, `/workspace/nova-lsp-status.png`, `/workspace/nova-gradle.png`, `/workspace/nova-gradle-fail.png`, `/workspace/nova-kotlin.png`.
+
+### Phase 3 limitations
+- LSP and Gradle run in Electron main (ADR-0013), not novad.
+- Server-initiated `workspace/applyEdit` answers `applied: false`; code actions relying on it report "not applied". Client-side edits (rename preview, formatting, code-action edits) work.
+- `jdt://` (library/JDK source) locations are filtered out of definition/references; no class-file viewer.
+- JDT LS always runs on a JDK ≥21 (newest found if the selected one is older); the project JDK selection is passed to JDT as the runtime.
+- kotlin-ls: community server, embeds Kotlin 2.1.0, lags Kotlin 2.x (false "Unresolved reference" seen), Gradle classpath import can be slow/partial. Crashes on JDK 25.0.4.1 (`JavaVersion.parse`), so NOVA restricts it to JDK 11–21. JetBrains kotlin-lsp is only distributed as a VS Code .vsix bundle and is not integrated.
+- Gradle Kill kills the wrapper/client process tree; a shared Gradle daemon is left running (Gradle is expected to cancel the build when the client disconnects — not independently verified). Task list requires running `gradlew tasks` (can take minutes on a cold cache). One run shown at a time; output capped (512 KB in UI, 8 MB parsed).
+- javac problems have column 1 (javac's plain output has no column); kotlinc problems carry line+column.
+- No DAP/debugging, no test explorer, no Maven yet.
 
 ## Slice 2 verification (2026-10-12)
 | Check | Command | Result |
@@ -29,11 +57,11 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 - Replace All writes to disk; open dirty tabs for those files are flagged, not merged.
 - Terminal: one session at a time ("New Terminal" restarts it). No tabs or split terminals yet. Shell = $SHELL / COMSPEC.
 - Git: status/diff/stage/unstage/commit only. No branches, push/pull, discard, or hunk staging yet. Requires `git` on PATH.
-- Trust gates terminal and commit only. Tasks and extensions don't exist yet.
+- Trust gates terminal, commit, language servers and Gradle runs. Extensions don't exist yet.
 - On a novad crash, the supervisor restarts it and open terminals end (reported as exited).
 - CSP allows `'unsafe-inline'` styles because Monaco needs them.
 - Installers are unsigned. App icon is generated from SVG by `apps/desktop/scripts/render-icon.cjs`.
 - Bundle includes all Monaco languages (large); lazy loading is planned.
 
 ## Next slice
-Windows CI (build novad + NSIS/portable, run unit + E2E on windows-latest), multiple terminal tabs, Git branch/discard, move watcher to novad `notify`, then Phase 3 LSP (Java/Kotlin/Gradle).
+Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/Gradle on windows-latest), server-initiated applyEdit with preview, jdt:// class-file viewer, Java debugging via java-debug (DAP), JUnit test explorer from Gradle, Maven support, multiple terminal tabs, Git branch/discard.
