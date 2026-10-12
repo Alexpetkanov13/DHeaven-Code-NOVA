@@ -1,0 +1,11 @@
+{
+  "name": "@nova/ai-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DHeaven Code: NOVA AI core: versioned provider abstraction (Ollama, OpenAI-compatible), context exclusion, secret redaction, untrusted-data wrapping, diff hunks.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "lint": "eslint src", "test": "vitest run" },
+  "dependencies": { "ignore": "^7.0.5" },
+  "devDependencies": { "@types/node": "^22.9.0", "eslint": "^10.12.0", "typescript": "~5.9.0", "typescript-eslint": "^8.71.1", "vitest": "^5.0.4" }
+}
