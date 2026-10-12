@@ -1,0 +1,5 @@
+{
+  "manifestVersion": 1, "name": "bad-throws", "publisher": "nova-tests", "displayName": "Bad Extension (throws on activate)",
+  "version": "0.0.1", "engines": { "nova": "*" }, "main": "extension.js",
+  "activationEvents": ["onStartupFinished"], "contributes": {}
+}

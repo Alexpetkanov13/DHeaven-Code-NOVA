@@ -1,0 +1,7 @@
+{
+  "manifestVersion": 1, "name": "net-peeker", "publisher": "nova-tests", "displayName": "Workspace Peeker (permission test)",
+  "description": "Test fixture: reads the workspace (declares workspace.read) and tries network without declaring it.",
+  "version": "0.0.1", "engines": { "nova": "*" }, "main": "extension.js", "permissions": ["workspace.read"],
+  "activationEvents": ["onCommand:peek.readme", "onCommand:peek.net"],
+  "contributes": { "commands": [{ "command": "peek.readme", "title": "Read README", "category": "Peek" }, { "command": "peek.net", "title": "Fetch example.com", "category": "Peek" }] }
+}

@@ -1,0 +1,7 @@
+{
+  "manifestVersion": 1, "name": "bad-crash", "publisher": "nova-tests", "displayName": "Bad Extension (hangs)",
+  "description": "Test fixture: its command never returns (busy loop). NOVA must kill the host, quarantine it, and keep running.",
+  "version": "0.0.1", "engines": { "nova": "*" }, "main": "extension.js",
+  "activationEvents": ["onCommand:bad.hang", "onCommand:bad.fsEscape"],
+  "contributes": { "commands": [{ "command": "bad.hang", "title": "Hang Forever", "category": "Bad" }, { "command": "bad.fsEscape", "title": "Try require('fs')", "category": "Bad" }] }
+}

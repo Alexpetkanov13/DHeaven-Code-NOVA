@@ -5,6 +5,8 @@ copyright: Copyright © 2026 DHeaven
 directories: { output: release, buildResources: build }
 files: [dist/**/*, package.json, "!dist/**/*.map"]
 asar: true
+# The extension host runs as a plain Node process with --permission; keep it a real file on disk.
+asarUnpack: [dist/main/extension-host.cjs]
 extraResources:
   - from: ../../target/release/
     to: .
