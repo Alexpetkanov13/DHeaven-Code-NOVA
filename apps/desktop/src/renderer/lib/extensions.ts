@@ -8,6 +8,22 @@ export { sanitizeTheme, THEMABLE_VARS };
 export const DEFAULT_THEME = 'nova-dark';
 export const monacoThemeName = (id: string) => `ext-${id.replace(/[^a-z0-9-]/gi, '-')}`.slice(0, 120);
 
+/** JSON language configuration → Monaco: string patterns become RegExps, indent actions become enums (VS Code format). */
+export function toLanguageConfiguration(raw: Record<string, unknown>): monaco.languages.LanguageConfiguration {
+  const re = (v: unknown) => (typeof v === 'string' ? new RegExp(v) : v && typeof v === 'object' && typeof (v as { pattern?: unknown }).pattern === 'string' ? new RegExp((v as { pattern: string }).pattern, (v as { flags?: string }).flags ?? '') : undefined);
+  const out: Record<string, unknown> = { ...raw };
+  if (raw.wordPattern) out.wordPattern = re(raw.wordPattern);
+  const ir = raw.indentationRules as Record<string, unknown> | undefined;
+  if (ir) out.indentationRules = Object.fromEntries(Object.entries(ir).map(([k, v]) => [k, re(v)]).filter(([, v]) => v));
+  const acts: Record<string, monaco.languages.IndentAction> = { none: monaco.languages.IndentAction.None, indent: monaco.languages.IndentAction.Indent, indentOutdent: monaco.languages.IndentAction.IndentOutdent, outdent: monaco.languages.IndentAction.Outdent };
+  if (Array.isArray(raw.onEnterRules)) out.onEnterRules = (raw.onEnterRules as Record<string, unknown>[]).map((r) => {
+    const a = (r.action ?? {}) as Record<string, unknown>;
+    return { ...(r.beforeText ? { beforeText: re(r.beforeText) } : {}), ...(r.afterText ? { afterText: re(r.afterText) } : {}), ...(r.previousLineText ? { previousLineText: re(r.previousLineText) } : {}),
+      action: { ...a, indentAction: acts[String(a.indent ?? a.indentAction ?? 'none')] ?? monaco.languages.IndentAction.None } };
+  });
+  return out as monaco.languages.LanguageConfiguration;
+}
+
 type Snip = { prefix: string | string[]; body: string | string[]; description?: string };
 
 /** Renderer-side state for extensions: lists, contributions, host status, output channels, status items. */
@@ -69,7 +85,7 @@ export class ExtensionsClient {
         if (add.length) { monaco.languages.register({ id: l.id, extensions: add }); for (const e of add) this.extraExts.add(`${l.id}:${e}`); }
       }
       if (l.configurationData && typeof l.configurationData === 'object' && !('__error' in l.configurationData)) {
-        try { this.langDisposables.push(monaco.languages.setLanguageConfiguration(l.id, l.configurationData as monaco.languages.LanguageConfiguration)); } catch (e) { this.hooks.onError(`${l.extName}: language configuration rejected: ${e}`); }
+        try { this.langDisposables.push(monaco.languages.setLanguageConfiguration(l.id, toLanguageConfiguration(l.configurationData as Record<string, unknown>))); } catch (e) { this.hooks.onError(`${l.extName}: language configuration rejected: ${e}`); }
       }
     }
     for (const g of c.grammars) {
@@ -77,7 +93,7 @@ export class ExtensionsClient {
     }
     // Schema validation + completion: JSON via Monaco's JSON language service; YAML via a CSP-safe validator.
     monaco.json.jsonDefaults.setDiagnosticsOptions({
-      validate: true, enableSchemaRequest: false, allowComments: false,
+      validate: true, enableSchemaRequest: false, allowComments: false, schemaValidation: 'error',
       schemas: c.jsonValidation.filter((v) => v.schema && typeof v.schema === 'object' && !('__error' in (v.schema as object))).map((v) => ({
         uri: `https://nova.invalid/schemas/${v.extId}/${v.schemaPath}`, fileMatch: v.fileMatch.map((f) => `**/${f}`), schema: v.schema as object,
       })),

@@ -242,7 +242,7 @@ pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-
 .wizard-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .wizard-grid label.wide, .wizard-source { grid-column: 1 / -1; }
 .wizard-grid input, .wizard-grid select { background: var(--nova-navy-800, #111a33); color: inherit; border: 1px solid var(--nova-border); border-radius: 5px; padding: 4px 6px; }
-.wizard-grid .row { display: flex; gap: 6px; } .wizard-grid .row input { flex: 1; }
+.wizard-grid .wiz-row { display: flex; gap: 6px; } .wizard-grid .wiz-row input { flex: 1; min-width: 0; }
 .wizard-error { color: #ff8a8a; white-space: pre-wrap; font-size: 12px; }
 .btn.link { background: none; border: none; color: var(--nova-cyan, #4cc9f0); cursor: pointer; padding: 0 4px; }
 .wizard .badge.ok { color: #7CF2C1; border-color: rgba(124,242,193,.5); text-decoration: none; }
@@ -255,3 +255,4 @@ pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-
 .mc-task .mc-name { flex: 1; } .mc-task code { opacity: .7; font-size: 11px; }
 .mc-task .ok { color: #7CF2C1; } .mc-task .warn { color: #FFC66D; }
 .mc-run { padding: 6px 10px; } .mc-run .gradle-out { max-height: 260px; overflow: auto; font-size: 11px; white-space: pre-wrap; }
+.mc-console input { width: 100%; margin-top: 4px; background: var(--nova-navy-800, #111a33); color: inherit; border: 1px solid var(--nova-border); border-radius: 5px; padding: 3px 6px; font-family: monospace; }

@@ -25,12 +25,16 @@ Validated strictly (unknown keys are errors) by `@nova/extension-api` `validateM
 | `menus["editor/context"]` | `[{ command, when?: "editorLangId == <lang>" }]` | editor right-click menu |
 | `configuration` | `{ title?, properties: { key: { type: string\|number\|boolean, default?, description?, enum? } } }` | editable in the Extensions view; read with `nova.workspace.getConfiguration().get(key)` |
 | `themes` | `[{ id, label, uiTheme: dark\|light\|hc, path }]` | *Preferences: Color Theme: …* in the palette. Theme file format below |
-| `languages` | `[{ id, aliases?, extensions?, configuration? }]` | registers a Monaco language; `configuration` is a Monaco `LanguageConfiguration` JSON |
+| `languages` | `[{ id, aliases?, extensions?, configuration? }]` | registers a Monaco language (or adds file extensions to an existing one, e.g. `.mcmeta` → `json`); `configuration` is VS Code-style language-configuration JSON: string regexes in `wordPattern`, `indentationRules`, `onEnterRules` (`action.indent`: `none\|indent\|indentOutdent\|outdent`) are converted |
 | `grammars` | `[{ language, format: "monarch", path }]` | Monarch tokenizer JSON (regexes as strings). TextMate grammars are not supported |
 | `snippets` | `[{ language, path }]` | VS Code-style snippet JSON (`prefix`, `body`, `description`) |
 | `outputChannels` | `[name]` | informational; channels are created at runtime with `createOutputChannel` |
 | `views` | `[{ id, name }]` | a collapsible section under the Explorer, backed by `registerTreeDataProvider` |
 | `tasks` | `[{ id, label, command }]` | *Tasks: Run <label>* in the palette; runs the command |
+| `projectTemplates` | `[{ id, label, description?, path, resolver: fabric\|paper\|none, wrapper? }]` | entries in *File: New Project…*. `path` is a folder rendered by the core engine (`{{var}}` in text files, `__var__` in path segments, unknown variables fail generation); `wrapper` is copied verbatim (Gradle wrapper). Versions come from the named core resolver |
+| `jsonValidation` | `[{ fileMatch: [glob], schema }]` | JSON Schema for matching files via Monaco's JSON service (errors + completion + hover). Glob without `/` matches the file name, with `/` a path suffix (`*`, `**`) |
+| `yamlValidation` | `[{ fileMatch: [glob], schema }]` | YAML files validated against a JSON Schema (draft-07 subset: type/const/enum/required/properties/additionalProperties/items/min/max/pattern/oneOf/anyOf) → editor markers; top-level key completion |
+| `gradleRunTasks` | `[{ view, plugin, label, tasks: [{ name, label, requiresEula?, runDir? }] }]` | a sidebar view named `view` listing `tasks` when the root build script applies Gradle plugin `plugin` (static detection). `requiresEula` tasks need explicit Minecraft-EULA consent before `<runDir>/eula.txt` is written; main refuses to run them otherwise |
 
 Cross-references are checked: menu/task commands must exist in `commands`, grammars/snippets must name a contributed language, activation events need `main`, every referenced file must exist in the package.
 

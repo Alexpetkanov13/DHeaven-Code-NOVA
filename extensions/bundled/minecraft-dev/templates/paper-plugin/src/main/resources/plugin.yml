@@ -2,5 +2,5 @@ name: {{className}}
 version: '${version}'
 main: {{package}}.{{className}}
 api-version: '{{apiVersion}}'
-description: {{description}}
+description: '{{description}}'
 authors: [{{author}}]

@@ -41,3 +41,7 @@ monaco.editor.defineTheme('nova-dark', {
 });
 
 export { monaco };
+
+// Read-only diagnostics hook used by E2E tests (marker texts only; exposes no capabilities).
+(window as unknown as { __novaMarkers: () => string[] }).__novaMarkers = () => monaco.editor.getModelMarkers({}).map((m) => `${m.resource.path.split('/').pop()}:${m.startLineNumber} [${m.source ?? m.owner}] ${m.message}`);
+(window as unknown as { __novaModelText: (suffix: string) => string | null }).__novaModelText = (suffix) => monaco.editor.getModels().find((m) => m.uri.path.endsWith(suffix))?.getValue() ?? null;

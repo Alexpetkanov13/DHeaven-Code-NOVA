@@ -1,8 +1,43 @@
 # Development Progress
 
-## Status: Phases 1–6 (… + Java debugging, JUnit explorer, NOVA AI, extensions platform) — verified on Linux; Windows untested
+## Status: Phases 1–6 + Minecraft developer pack (bundled first-party extension) — verified on Linux; Windows untested
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
+
+## Minecraft developer pack verification (2026-10-12)
+Bundled first-party, **declarative** extension `extensions/bundled/minecraft-dev` (`dheaven.minecraft-dev`, installed at startup through the normal validation/integrity path, can be disabled, not uninstallable) + core support: reusable New Project wizard/template engine/version resolvers, `jsonValidation` / `yamlValidation` / `gradleRunTasks` / `projectTemplates` contribution points, Minecraft view, EULA gate. ADR-0017. Commits: M1 `42e6f59`, M2 `cfa3607`, M3 `20688c0`, M4 (this commit).
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build | `pnpm -r typecheck`, `eslint src e2e`, `pnpm build` | PASS |
+| Unit tests | `pnpm -r test` | PASS: contract 4, ai-core 15, extension-api 12, desktop 79 (+2 skipped: DAP real-adapter, LIVE Minecraft build) |
+| Template/resolver unit | `src/main/templates/templates.test.ts` | PASS 8: option validation, unknown `{{var}}` fails, non-empty target + `__var__` path traversal refused; Fabric resolver (stable 26.1+ only, matching Fabric API build, Java from Mojang metadata), Paper resolver (releases ≥1.20.6, newest `-stable` build, Java min from Fill) against **stubbed** endpoints; offline → `offline-fallback` with "pinned on 2026-10-12" label; generation renders wrapper (+x), versions, rejects un-resolved MC versions |
+| **Live generation + `./gradlew build`** | `NOVA_MC_BUILD=1 JAVA_HOME=<JDK25> vitest run src/main/templates` | PASS (22 s): live official APIs (Fabric meta/maven, fabric-example-mod, Mojang metadata; PaperMC Fill/maven, Gradle Plugin Portal) resolved MC 26.3 / loader 0.19.5 / Loom 1.18-SNAPSHOT / Fabric API 0.162.0+26.3 and Paper API 26.3.build.177-stable / run-paper 3.1.0 / Java 25; both projects built (`livemod-1.0.0.jar`, `liveplugin-1.0.0.jar`) |
+| Fabric Loom heaviness | `./gradlew build --no-daemon` with an **empty** `GRADLE_USER_HOME` | BUILD SUCCESSFUL in 40 s, 567 MB downloaded (Gradle 9.7.1 distribution + Minecraft 26.3 jars/libraries). Lighter than expected because 26.x is unobfuscated (no mappings/remapping). Warm-cache builds: Fabric 20 s, Paper 22 s |
+| Bundled install unit | `src/main/ext/bundled.test.ts` | PASS: installed once, idempotent (same SHA → no reinstall), disabled state kept, user-installed copy with same id untouched |
+| Schema unit | `src/renderer/lib/schemas.test.ts` | PASS 4: template `fabric.mod.json` / `plugin.yml` valid; bad id/schemaVersion/environment/entrypoint/unknown key, missing `main`, bad `load`, `org.bukkit.*` main, pack.mcmeta (pack_format and min/max_format), model elements/face texture refs reported; fileMatch globs |
+| Run-task/EULA unit | `src/main/runTasks.test.ts` | PASS 2: plugin ids in Groovy/Kotlin DSL + legacy `apply plugin`, comments ignored; EULA status; gate blocks `runServer`/`:runServer` until `eula=true`; `eula.txt` path traversal refused |
+| Manifest unit | extension-api | PASS: new contribution points validate; `../` paths, unknown resolver, traversal globs, bad task names rejected |
+| Minecraft E2E | `pnpm e2e e2e/minecraft.spec.ts` | PASS (~7 s; 4 consecutive standalone runs + full suite + server runs after the settle fix noted below): welcome → *New Project…* → Fabric (live versions shown, JDK list filtered to Java 25+) → created; Paper → created; files on disk incl. wrapper; Fabric workspace: Minecraft view lists `runClient` + `runServer` (EULA required); `fabric.mod.json` id → `"Invalid Id!"` gives an error squiggle + marker *String does not match the pattern…*; `hello.sk` opens as `skript` with ≥4 distinct token classes (comment/keyword/event/string/expression); Enter after a `:` line indents; Paper workspace: `plugin.yml` clean, then removing `main` + `load: LATER` → markers *Missing required property "main"*, *Must be one of: "STARTUP", "POSTWORLD"*; Minecraft view lists Paper `runServer`; direct `gradle.run.v1 runServer` refused (*EULA not accepted*); Run → EULA dialog (Accept disabled until checkbox) → Decline → no `eula.txt` |
+| **Real Paper `runServer`** | `NOVA_E2E_MC_SERVER=1 pnpm e2e e2e/minecraft.spec.ts` | PASS (24 s warm, ~3.5 min first time incl. Paper download): accept EULA in the dialog → `run/eula.txt` `eula=true` → Paper 26.3 starts (`Done (10.98s)!`), generated plugin logs `[NovaPaper] Nova Paper enabled`; console command `list` answered; **Stop** sends `stop` → `Stopping server` → exit |
+| Fabric `runClient` / `runServer` | — | NOT RUN (client needs a display/GPU + Mojang assets download; only listed/detected) |
+| All E2E | `NOVA_E2E_NO_SANDBOX=1 NOVA_SERVERS_DIR=~/nova-servers pnpm e2e` | PASS: 14/14 (5.6 min) |
+| Windows | — | NOT RUN |
+
+Screenshots: `/workspace/nova-mc-wizard.png` (wizard, live versions), `/workspace/nova-mc-view.png` (Minecraft view with a running Paper server).
+Gradle daemons started by these runs were stopped afterwards (none left running).
+
+Bugs found and fixed: Gradle runs had stdin closed, so the Paper console spun on EOF printing `>` prompts until the renderer crashed (stdin now kept open, never written unless you send a console command); Monaco JSON reported schema violations only as warnings (now errors); generated `plugin.yml` with an empty description was itself invalid (now quoted); `indentationRules` in the Skript language configuration silently disabled the `onEnterRules` indent under Monaco's default `advanced` auto-indent (removed; Enter-after-colon indent verified).
+
+### Minecraft pack limitations
+- Fabric template supports Minecraft **26.1+ only** (unobfuscated layout); 1.21.x and older (Yarn/Mojmap + remapping) are not offered. Paper template offers releases ≥ 1.20.6.
+- Loom version comes from the official fabric-example-mod `gradle.properties` (Fabric publishes no "recommended Loom" API); it is currently a `-SNAPSHOT`.
+- Skript support is **syntax only** (Monarch highlighting, snippets, Enter-after-colon indent): no validation against Skript's syntax registry, no addon awareness, no outdent for `else:`.
+- YAML validation uses a JSON-Schema subset validator (no `$ref`, `allOf`, formats); no YAML hover; completion is top-level keys only.
+- Run tasks are detected statically from plugin ids in the root build script: convention plugins, `buildSrc`, subprojects are missed. Fabric `runServer` shares the EULA gate (`run/`), but was not executed here.
+- In the E2E, the Enter-after-colon check needs a 300 ms settle after typing (without it, 2/3 runs failed — most likely the suggest widget racing the keypress); real typing is unaffected as far as observed.
+- Schemas were written for NOVA from public docs (no SchemaStore copy); they may lag format changes (e.g. new pack.mcmeta fields).
+- No Mojang assets are bundled; Loom/run-paper download Minecraft/Paper under their own terms at build/run time.
 
 ## Phase 5 verification — NOVA AI (2026-10-12)
 Box provisioning: Ollama 0.40.3 (user-space tarball in `~/opt/ollama`, `ollama serve` on 127.0.0.1:11434). `ollama pull` failed in this sandbox (registry redirect target resolves to a non-public IP), so the model was built locally: `Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF` q4_k_m from Hugging Face (sha256 1d961463…ff32) + a ChatML Modelfile → `qwen2.5-coder:0.5b`. **All AI E2E runs below use this real model**; stub servers are only used in unit tests and are labelled as such.
@@ -145,4 +180,4 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 - Bundle includes all Monaco languages (large); lazy loading is planned.
 
 ## Next slice
-AI: inline completions, codebase retrieval with the same exclusion rules, multi-file edit proposals, E2E for the remaining AI actions and a real keyring (Windows/macOS CI). Extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
+Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabric runClient verification on a desktop, Skript validation via an addon-aware parser, YAML hover. AI: inline completions, codebase retrieval with the same exclusion rules, multi-file edit proposals, E2E for the remaining AI actions and a real keyring (Windows/macOS CI). Extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.

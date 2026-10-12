@@ -331,8 +331,12 @@ const handlers: Handlers = {
   'ext.treeChildren.v1': async ({ viewId, element }) => extCall(() => exts.treeChildren(viewId, element)) as never,
   'ext.permissionAnswer.v1': async ({ requestId, grant, remember }) => { permWaiters.get(requestId)?.({ grant, remember }); permWaiters.delete(requestId); return null; },
   'ext.restartHost.v1': async () => extCall(async () => { await exts.restartHost(); return null; }),
-  'runTasks.detect.v1': async () => detectRunTasks(needWs().root, await runTaskContribs()),
-  'runTasks.acceptEula.v1': async ({ runDir }) => { // only reachable from the explicit EULA consent dialog
+  'gradle.input.v1': async ({ runId, text }) => { // console input for a running task (e.g. `stop` for a Minecraft server)
+    const p = gradleRuns.get(runId); if (!p?.stdin || p.stdin.destroyed) throw new AppError('NOT_FOUND', 'That run is not active');
+    p.stdin.write(text); return null;
+  },
+  'runtask.detect.v1': async () => detectRunTasks(needWs().root, await runTaskContribs()),
+  'runtask.acceptEula.v1': async ({ runDir }) => { // only reachable from the explicit EULA consent dialog
     const root = needWs().root;
     const allowed = (await detectRunTasks(root, await runTaskContribs())).some((d) => d.tasks.some((t) => t.requiresEula && t.runDir === runDir));
     if (!allowed) throw new AppError('INVALID_REQUEST', 'No EULA-gated run task uses that folder');

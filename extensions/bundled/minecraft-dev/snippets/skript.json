@@ -1,0 +1,85 @@
+{
+ "event": {
+  "prefix": "on",
+  "description": "Event handler",
+  "body": [
+   "on ${1:join}:",
+   "\t${0:send \"Welcome, %player%!\" to player}"
+  ]
+ },
+ "command": {
+  "prefix": "command",
+  "description": "Command definition",
+  "body": [
+   "command /${1:hello} [<${2:text}>]:",
+   "\tpermission: ${3:skript.${1}}",
+   "\tdescription: ${4:Says hello}",
+   "\ttrigger:",
+   "\t\t${0:send \"Hello %arg-1%\" to player}"
+  ]
+ },
+ "function": {
+  "prefix": "function",
+  "description": "Function with return type",
+  "body": [
+   "function ${1:name}(${2:p: player}) :: ${3:text}:",
+   "\t${0:return \"%{_p}%\"}"
+  ]
+ },
+ "options": {
+  "prefix": "options",
+  "description": "Options block",
+  "body": [
+   "options:",
+   "\t${1:prefix}: ${0:&8[&bServer&8]}"
+  ]
+ },
+ "variables": {
+  "prefix": "variables",
+  "description": "Default variables block",
+  "body": [
+   "variables:",
+   "\t{${1:coins::%player%}} = ${0:0}"
+  ]
+ },
+ "every": {
+  "prefix": "every",
+  "description": "Periodic event",
+  "body": [
+   "every ${1:5 minutes}:",
+   "\t${0:broadcast \"Remember to vote!\"}"
+  ]
+ },
+ "if": {
+  "prefix": "if",
+  "description": "Conditional",
+  "body": [
+   "if ${1:player has permission \"x\"}:",
+   "\t$2",
+   "else:",
+   "\t$0"
+  ]
+ },
+ "loop": {
+  "prefix": "loop",
+  "description": "Loop",
+  "body": [
+   "loop ${1:all players}:",
+   "\t${0:send \"hi\" to loop-player}"
+  ]
+ },
+ "set": {
+  "prefix": "set",
+  "description": "Set a variable",
+  "body": [
+   "set {${1:_var}} to ${0:1}"
+  ]
+ },
+ "wait": {
+  "prefix": "wait",
+  "description": "Delay",
+  "body": [
+   "wait ${1:1 second}"
+  ]
+ }
+}

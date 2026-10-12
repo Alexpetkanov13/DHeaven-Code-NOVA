@@ -19,7 +19,7 @@ export function MinecraftView({ title, trusted, hasWorkspace, onError }: { title
   const outRef = useRef<HTMLPreElement>(null);
   useEffect(() => { if (outRef.current) outRef.current.scrollTop = outRef.current.scrollHeight; }, [output]);
 
-  const refresh = useCallback(() => { if (hasWorkspace) void call('runTasks.detect.v1', {}).then(setDetected).catch(onError); else setDetected(null); }, [hasWorkspace, onError]);
+  const refresh = useCallback(() => { if (hasWorkspace) void call('runtask.detect.v1', {}).then(setDetected).catch(onError); else setDetected(null); }, [hasWorkspace, onError]);
   useEffect(() => { refresh(); const off = on('fs.changed.v1', refresh); return off; }, [refresh]);
   useEffect(() => {
     const a = on('gradle.output.v1', ({ runId, data }) => { if (runId === runRef.current) setOutput((o) => (o + data).slice(-MAX_OUT)); });
@@ -36,7 +36,7 @@ export function MinecraftView({ title, trusted, hasWorkspace, onError }: { title
   const runTask = (t: Task) => { if (t.requiresEula && !t.eulaAccepted) { setAgree(false); setEulaFor(t); } else void start(t); };
   const accept = async () => {
     const t = eulaFor!; setEulaFor(null);
-    try { await call('runTasks.acceptEula.v1', { runDir: t.runDir }); refresh(); await start({ ...t, eulaAccepted: true }); } catch (e) { onError(e); }
+    try { await call('runtask.acceptEula.v1', { runDir: t.runDir }); refresh(); await start({ ...t, eulaAccepted: true }); } catch (e) { onError(e); }
   };
 
   const groups = (detected ?? []).filter((d) => d.view === title);
@@ -63,7 +63,12 @@ export function MinecraftView({ title, trusted, hasWorkspace, onError }: { title
       <p className="small pad">Tasks are detected from the build script (plugin ids), not by running Gradle. Minecraft/Paper jars are downloaded by the Gradle plugins on first run; NOVA bundles no Mojang assets.</p>
       {run && (
         <div className="mc-run">
-          <div className="small">{run.task}: {run.state === 'running' ? 'running…' : run.killed ? 'stopped' : `exited with ${run.code}`} {run.state === 'running' && <button className="btn" onClick={() => void call('gradle.kill.v1', { runId: run.runId })}>Stop</button>}</div>
+          <div className="small mc-run-h">{run.task}: {run.state === 'running' ? 'running…' : run.killed ? 'stopped' : `exited with ${run.code}`} {run.state === 'running' && <>
+            <button className="btn" title="Sends the server console command 'stop' (saves worlds)" onClick={() => void call('gradle.input.v1', { runId: run.runId, text: 'stop\n' }).catch(onError)}>Stop</button>
+            <button className="btn" title="Kills the Gradle process tree immediately" onClick={() => void call('gradle.kill.v1', { runId: run.runId })}>Kill</button></>}</div>
+          {run.state === 'running' && <form className="mc-console" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget.elements.namedItem('cmd') as HTMLInputElement; if (f.value.trim()) void call('gradle.input.v1', { runId: run.runId, text: `${f.value.replace(/[\r\n]/g, ' ')}\n` }).catch(onError); f.value = ''; }}>
+            <input name="cmd" aria-label="Server console command" placeholder="console command (e.g. list)" />
+          </form>}
           <pre ref={outRef} className="gradle-out" aria-label="Minecraft run output">{output}</pre>
         </div>
       )}

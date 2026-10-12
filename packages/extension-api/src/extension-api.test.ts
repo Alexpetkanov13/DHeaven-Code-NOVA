@@ -42,6 +42,22 @@ describe('manifest', () => {
   });
 });
 
+describe('Minecraft-pack contribution points', () => {
+  it('validates projectTemplates / jsonValidation / yamlValidation / gradleRunTasks', () => {
+    const base = { manifestVersion: 1, name: 'mc', publisher: 'p', displayName: 'MC', version: '1.0.0', engines: { nova: '*' } };
+    const ok = validateManifest({ ...base, contributes: {
+      projectTemplates: [{ id: 't', label: 'T', path: 'templates/t', resolver: 'paper' }],
+      jsonValidation: [{ fileMatch: ['assets/*/models/**/*.json'], schema: 's.json' }], yamlValidation: [{ fileMatch: ['plugin.yml'], schema: 'p.json' }],
+      gradleRunTasks: [{ view: 'Minecraft', plugin: 'xyz.jpenilla.run-paper', label: 'Paper', tasks: [{ name: 'runServer', label: 'Run', requiresEula: true }] }],
+    } });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.manifest.contributes.gradleRunTasks[0]!.tasks[0]!.runDir).toBe('run');
+    const bad = validateManifest({ ...base, contributes: { projectTemplates: [{ id: 't', label: 'T', path: '../x', resolver: 'curl' }], jsonValidation: [{ fileMatch: ['../../etc/*'], schema: '/abs.json' }], gradleRunTasks: [{ view: 'V', plugin: 'p', label: 'L', tasks: [{ name: 'run; rm -rf /', label: 'x', runDir: '../..' }] }] } });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors.join('\n')).toMatch(/projectTemplates[\s\S]*jsonValidation[\s\S]*gradleRunTasks/);
+  });
+});
+
 describe('permissions', () => {
   it('UI APIs need nothing; gated APIs need declaration and a grant', () => {
     expect(checkCapability('output.append', [], {})).toEqual({ allow: true });

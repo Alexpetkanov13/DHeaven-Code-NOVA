@@ -55,7 +55,9 @@ export interface Run { id: number; proc: ChildProcess; output: string[] }
 
 export function runGradle(root: string, info: GradleInfo, args: string[], env: NodeJS.ProcessEnv, onData: (s: string) => void, onExit: (code: number | null, signal: string | null, problems: Problem[]) => void): ChildProcess {
   const { cmd, pre } = gradleCommand(root, info.wrapper);
-  const p = spawn(cmd, [...pre, ...args, '--console=plain'], { cwd: root, env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const p = spawn(cmd, [...pre, ...args, '--console=plain'], { cwd: root, env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  // stdin stays open (never written): server consoles (run-paper/Loom runServer) treat EOF as input and spin printing prompts.
+  p.stdin!.on('error', () => {});
   let all = '';
   const take = (b: Buffer) => { const s = b.toString('utf8'); if (all.length < 8 * 1024 * 1024) all += s; onData(s); };
   p.stdout!.on('data', take); p.stderr!.on('data', take);

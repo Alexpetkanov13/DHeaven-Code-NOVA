@@ -3,7 +3,7 @@
   "name": "minecraft-dev",
   "publisher": "dheaven",
   "displayName": "Minecraft Developer Pack",
-  "description": "First-party, bundled. Fabric mod / Paper plugin project templates (versions resolved from official Fabric/PaperMC sources at generation time), fabric.mod.json / plugin.yml / pack.mcmeta / model JSON schema validation. Contains no Mojang assets.",
+  "description": "First-party, bundled. Fabric mod / Paper plugin project templates (versions resolved from official Fabric/PaperMC sources at generation time); fabric.mod.json, plugin.yml, pack.mcmeta and model JSON validation; Minecraft run tasks with explicit EULA consent; Skript highlighting/snippets/indentation (SYNTAX ONLY: no Skript validation or addon awareness). Contains no Mojang assets.",
   "version": "1.0.0",
   "license": "MIT",
   "engines": {
@@ -34,6 +34,17 @@
         "extensions": [
           ".mcmeta"
         ]
+      },
+      {
+        "id": "skript",
+        "aliases": [
+          "Skript (syntax only)",
+          "Skript"
+        ],
+        "extensions": [
+          ".sk"
+        ],
+        "configuration": "language-configuration.skript.json"
       }
     ],
     "jsonValidation": [
@@ -69,6 +80,10 @@
       {
         "language": "json",
         "path": "snippets/minecraft-json.json"
+      },
+      {
+        "language": "skript",
+        "path": "snippets/skript.json"
       }
     ],
     "gradleRunTasks": [
@@ -122,6 +137,13 @@
             "runDir": "run"
           }
         ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "skript",
+        "format": "monarch",
+        "path": "syntaxes/skript.monarch.json"
       }
     ]
   }

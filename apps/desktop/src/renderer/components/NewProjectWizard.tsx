@@ -81,7 +81,7 @@ export function NewProjectWizard({ onClose, onCreated }: { onClose(): void; onCr
                   {!okJdks.length && <option value="">No JDK {javaReq}+ found (project still created)</option>}
                 </select>
               </label>
-              <div className="small wizard-source" data-testid="version-source" data-source={res?.source ?? ''}>
+              <div className="small wizard-source" data-testid="version-source" data-source={res?.source ?? ''} data-resolver={res?.resolver ?? ''}>
                 {resolving ? 'Resolving current versions from official sources…' : res ? <>
                   <span className={`badge ${res.source === 'live' ? 'ok' : 'warn'}`}>{res.source === 'live' ? 'live' : 'OFFLINE FALLBACK (pinned)'}</span> {res.note}
                   {version && <div>{Object.entries({ ...res.shared, ...version.deps }).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}
@@ -99,7 +99,7 @@ export function NewProjectWizard({ onClose, onCreated }: { onClose(): void; onCr
             <label>Author<input aria-label="Author" value={author} onChange={(e) => setAuthor(e.target.value)} /></label>
             <label className="wide">Description<input aria-label="Description" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
             <label className="wide">Location
-              <span className="row"><input aria-label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="/path/to/parent folder" />
+              <span className="wiz-row"><input aria-label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="/path/to/parent folder" />
                 <button className="btn" onClick={() => void call('template.pickLocation.v1', {}).then((p) => p && setLocation(p))}>Browse…</button></span>
               {location && <span className="small">Creates {location.replace(/[\\/]+$/, '')}/{effModId}</span>}
             </label>
