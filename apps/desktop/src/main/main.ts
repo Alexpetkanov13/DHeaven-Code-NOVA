@@ -219,8 +219,8 @@ const handlers: Handlers = {
     return { runId };
   },
   'gradle.kill.v1': async ({ runId }) => { const p = gradleRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
-  'debug.configs.get.v1': async () => (await wsSettings.get(needWs().root)).launchConfigs,
-  'debug.configs.set.v1': async ({ configs }) => { await wsSettings.set(needWs().root, { launchConfigs: configs }); return null; },
+  'debug.getConfigs.v1': async () => (await wsSettings.get(needWs().root)).launchConfigs,
+  'debug.setConfigs.v1': async ({ configs }) => { await wsSettings.set(needWs().root, { launchConfigs: configs }); return null; },
   'debug.start.v1': async ({ config }) => {
     await requireTrust();
     try { return { sessionId: await dbg.start(config) }; } catch (e) { if (e instanceof Error && e.message === 'UNTRUSTED') throw new AppError('UNTRUSTED', 'Debugging requires a trusted workspace'); throw new AppError('CONFLICT', e instanceof Error ? e.message : String(e)); }
@@ -230,8 +230,8 @@ const handlers: Handlers = {
   'debug.request.v1': async ({ sessionId, command, args }) => {
     try { return (await dbg.request(sessionId, command, args)) ?? null; } catch (e) { throw new AppError('LSP_ERROR', e instanceof Error ? e.message : String(e)); }
   },
-  'debug.breakpoints.get.v1': async () => dbg.getBreakpoints(),
-  'debug.breakpoints.set.v1': async ({ path: file, breakpoints }) => { assertWithin(needWs().root, file); return dbg.setBreakpoints(file, breakpoints); },
+  'debug.getBreakpoints.v1': async () => dbg.getBreakpoints(),
+  'debug.setBreakpoints.v1': async ({ path: file, breakpoints }) => { assertWithin(needWs().root, file); return dbg.setBreakpoints(file, breakpoints); },
   'debug.adapter.v1': async () => ({ installed: JAVA_DEBUG.isInstalledSync(serversDir()), name: JAVA_DEBUG.name, version: JAVA_DEBUG.version, url: JAVA_DEBUG.download.url, sizeHint: JAVA_DEBUG.download.sizeHint, license: JAVA_DEBUG.download.license, sha256: JAVA_DEBUG.download.sha256 }),
   'debug.install.v1': async () => {
     const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('debug.install.v1', { message, ...extra });

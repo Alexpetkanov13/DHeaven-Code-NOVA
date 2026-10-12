@@ -61,13 +61,13 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
   const loadAdapter = useCallback(() => void call('debug.adapter.v1', {}).then(setAdapter).catch(onError), [onError]);
   useEffect(() => {
     if (!hasWorkspace) return;
-    void call('debug.configs.get.v1', {}).then((c) => { setConfigs(c); if (c[0]) { setSel(c[0].id); setDraft(c[0]); setEnvText(envToText(c[0].env)); } }).catch(onError);
+    void call('debug.getConfigs.v1', {}).then((c) => { setConfigs(c); if (c[0]) { setSel(c[0].id); setDraft(c[0]); setEnvText(envToText(c[0].env)); } }).catch(onError);
     void call('jdk.list.v1', {}).then((r) => setJdks(r.jdks)).catch(() => {});
     loadAdapter();
     return on('debug.install.v1', (p) => { setInstallMsg(p.message); if (p.done) loadAdapter(); });
   }, [hasWorkspace, onError, loadAdapter]);
 
-  const persist = async (next: LaunchConfig[]) => { setConfigs(next); await call('debug.configs.set.v1', { configs: next }).catch(onError); };
+  const persist = async (next: LaunchConfig[]) => { setConfigs(next); await call('debug.setConfigs.v1', { configs: next }).catch(onError); };
   const save = async () => {
     if (!draft) return null;
     const c: LaunchConfig = { ...draft, env: textToEnv(envText) };

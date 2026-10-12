@@ -36,9 +36,9 @@ export class DebugStore {
   private patch(p: Partial<State>) { this.state = { ...this.state, ...p }; for (const s of this.subs) s(); this.redecorate(); }
 
   async load() {
-    try { const [st, bps] = await Promise.all([call('debug.status.v1', {}), call('debug.breakpoints.get.v1', {})]); this.patch({ status: st, breakpoints: bps.breakpoints, verified: bps.verified }); } catch (e) { this.ui.onError(e); }
+    try { const [st, bps] = await Promise.all([call('debug.status.v1', {}), call('debug.getBreakpoints.v1', {})]); this.patch({ status: st, breakpoints: bps.breakpoints, verified: bps.verified }); } catch (e) { this.ui.onError(e); }
   }
-  async reloadBreakpoints() { try { const b = await call('debug.breakpoints.get.v1', {}); this.patch({ breakpoints: b.breakpoints, verified: b.verified }); } catch { /* no ws */ } }
+  async reloadBreakpoints() { try { const b = await call('debug.getBreakpoints.v1', {}); this.patch({ breakpoints: b.breakpoints, verified: b.verified }); } catch { /* no ws */ } }
   pushConsole(category: string, text: string) {
     const c = [...this.state.console, { category, text }]; if (c.length > MAX_CONSOLE) c.splice(0, c.length - MAX_CONSOLE);
     this.patch({ console: c });
@@ -102,7 +102,7 @@ export class DebugStore {
   async setBps(path: string, bps: SourceBreakpoint[]) {
     const breakpoints = { ...this.state.breakpoints }; if (bps.length) breakpoints[path] = bps; else delete breakpoints[path];
     this.patch({ breakpoints });
-    try { const v = await call('debug.breakpoints.set.v1', { path, breakpoints: bps }); const verified = { ...this.state.verified }; if (v) verified[path] = v; else delete verified[path]; this.patch({ verified }); } catch (e) { this.ui.onError(e); }
+    try { const v = await call('debug.setBreakpoints.v1', { path, breakpoints: bps }); const verified = { ...this.state.verified }; if (v) verified[path] = v; else delete verified[path]; this.patch({ verified }); } catch (e) { this.ui.onError(e); }
   }
   toggle(path: string, line: number) {
     const cur = this.state.breakpoints[path] ?? [];

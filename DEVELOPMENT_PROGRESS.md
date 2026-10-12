@@ -1,8 +1,34 @@
 # Development Progress
 
-## Status: Phase 1 + Slice 2 + Phase 3 (LSP client, Java/JDT LS, Kotlin best-effort, Gradle) — verified on Linux; Windows untested
+## Status: Phases 1–4 (… + Java debugging via DAP, JUnit 5 test explorer) — verified on Linux; Windows untested
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
+
+## Phase 4 verification (2026-10-12)
+Box provisioning: microsoft/java-debug 0.53.1 plugin jar in `~/nova-servers/java-debug/0.53.1` (SHA-256 4f4778d4…9e24, the pin the in-app installer checks; Maven Central's SHA-1 matched). JUnit 5.11.4 resolved by Gradle from Maven Central.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build / cargo | `pnpm typecheck`, `pnpm lint`, `pnpm build`, `cargo test --release` | PASS (cargo: 7) |
+| Unit tests | `pnpm -r test` | PASS: contract 4, desktop 49 (+1 skipped = real-adapter integration test, needs `NOVA_SERVERS_DIR`). New: DebugManager vs in-process fake adapter (handshake order, capability-filtered conditional/logpoint breakpoints, command allowlist, adapter error propagation, stale session ids, adapter crash → clean `terminated` and a new session can start, untrusted refusal); JUnit source scan, XML parsing (pass/fail/skip/error, durations, entities/CDATA, class-level stdout fallback), gradle test args, debug-port detection; installer SHA-256 accept/reject for jar |
+| Real adapter integration | `NOVA_SERVERS_DIR=~/nova-servers npx vitest run src/main/dap/dap.int.test.ts` | PASS (~10 s): real JDT LS + java-debug: breakpoint at Greeter.java:13 hit, `name` = "NOVA", evaluate `prefix + "!"`, step (reason `step`), continue → program output `Hello, NOVA!` |
+| Debug E2E | `pnpm e2e e2e/debug.spec.ts` | PASS (~45 s): F9 breakpoint in the gutter, launch config (main class + preLaunch `classes`) saved and started; stops at breakpoint, editor current-line highlight from the adapter's frame, call stack top `greet`, Variables shows `name: "NOVA"`, watch `prefix + "!"` → `"Hello!"`, Debug Console evaluates `name.length()` → 4, Step Over, Step Out into `main`, Continue → terminated, console shows `Hello, NOVA!` and exit code 0 |
+| Tests E2E | `pnpm e2e e2e/tests.spec.ts` | PASS (3 tests): with `NOVA_DEMO_FAIL=1` Run All → 3 passed / 1 failed / 1 skipped / 0 errors (from Gradle's JUnit XML), failure message + stack (`GreeterTest.java:29`), captured stdout; Rerun Failed runs only `--tests …deliberateFailure`; single method run → exit 0. Without the env var: 3 passed / 2 skipped, exit 0. Debug single test: `--debug-jvm` → auto attach → stops at breakpoint in MathTest, `sum` = 5, continue → test passes |
+| All E2E | `pnpm e2e` | PASS: 9/9 (4.3 min) |
+| In-app java-debug download | — | NOT RUN against the network (pre-provisioned, per brief); consent dialog + SHA-256 path unit-tested with an injected fetch |
+| Windows | — | NOT RUN |
+
+Screenshots: `/workspace/nova-debug.png`, `/workspace/nova-tests.png`.
+
+### Phase 4 limitations
+- One debug session at a time; Java only (DAP layer is generic, no other adapter wired).
+- No exception breakpoints UI (NOVA sends an empty filter list), no data breakpoints, no hover-evaluate, no set-variable UI, no hot code replace.
+- Breakpoint lines don't move when you edit lines above them (stored by line number).
+- Debug crash isolation verified at unit level (fake adapter disconnect) — not by killing JDT LS during an E2E session.
+- Launch resolution depends on JDT LS having imported the Gradle project (first session can wait up to ~4 min on a cold import).
+- Test discovery is a source scan: inherited, `@Nested`, `@TestFactory`/dynamic tests and Kotlin edge cases aren't listed (Gradle still runs them; their results appear only in counts). Gradle's default XML puts stdout per class, shown as "class-level output".
+- Test runs require Gradle (no Maven); `--rerun` needs Gradle ≥ 7.6.
+- M1 commit already contains the Java adapter and test-explorer sources because App/main import them; M2/M3 commits add their tests/E2E and fixes.
 
 ## Phase 3 verification (2026-10-12)
 Box provisioning (outside the repo): Temurin JDK 21.0.12 in `~/.jdks`, JDT LS 1.61.0 and fwcd kotlin-language-server 1.3.13 pre-provisioned in `~/nova-servers` (`NOVA_SERVERS_DIR`; same pinned SHA-256 the in-app installer checks), Gradle 9.7.1 via the fixtures' wrapper. A JDK 25.0.4.1 is also on the box.
@@ -57,11 +83,11 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 - Replace All writes to disk; open dirty tabs for those files are flagged, not merged.
 - Terminal: one session at a time ("New Terminal" restarts it). No tabs or split terminals yet. Shell = $SHELL / COMSPEC.
 - Git: status/diff/stage/unstage/commit only. No branches, push/pull, discard, or hunk staging yet. Requires `git` on PATH.
-- Trust gates terminal, commit, language servers and Gradle runs. Extensions don't exist yet.
+- Trust gates terminal, commit, language servers, Gradle runs, debugging and test runs. Extensions don't exist yet.
 - On a novad crash, the supervisor restarts it and open terminals end (reported as exited).
 - CSP allows `'unsafe-inline'` styles because Monaco needs them.
 - Installers are unsigned. App icon is generated from SVG by `apps/desktop/scripts/render-icon.cjs`.
 - Bundle includes all Monaco languages (large); lazy loading is planned.
 
 ## Next slice
-Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/Gradle on windows-latest), server-initiated applyEdit with preview, jdt:// class-file viewer, Java debugging via java-debug (DAP), JUnit test explorer from Gradle, Maven support, multiple terminal tabs, Git branch/discard.
+Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
