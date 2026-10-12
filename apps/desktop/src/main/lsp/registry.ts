@@ -1,3 +1,4 @@
+import { JAVA_DEBUG } from '../dap/java';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -13,7 +14,7 @@ export interface ServerDef {
   installDir(serversDir: string): string;
   isInstalled(serversDir: string): Promise<boolean>;
   launch(o: { serversDir: string; storageDir: string; root: string; jdk: Jdk }): Promise<LaunchSpec>;
-  initOptions?(jdk: Jdk): unknown;
+  initOptions?(jdk: Jdk, serversDir: string): unknown;
   limitations: string;
 }
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
@@ -44,7 +45,9 @@ export const SERVERS: Record<ServerId, ServerDef> = {
         env: { ...process.env, JAVA_HOME: jdk.home },
       };
     },
-    initOptions: (jdk) => ({
+    initOptions: (jdk, serversDir) => ({
+      // java-debug is an optional OSGi bundle; JDT LS only loads bundles listed here at startup.
+      bundles: JAVA_DEBUG.isInstalledSync(serversDir) ? [JAVA_DEBUG.jar(serversDir)] : [],
       settings: { java: {
         configuration: { runtimes: [{ name: `JavaSE-${jdk.major}`, path: jdk.home, default: true }] },
         import: { gradle: { enabled: true, java: { home: jdk.home } } },

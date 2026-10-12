@@ -131,3 +131,48 @@ button { font: inherit; color: inherit; }
 .gradle-tasks .link:disabled { color: #777; cursor: default; }
 .gradle-out { flex: 1; overflow: auto; margin: 6px 10px 10px; padding: 6px; background: #0b0f1a; font-size: 11px; white-space: pre-wrap; word-break: break-all; min-height: 120px; }
 .gradle { display: flex; flex-direction: column; height: 100%; }
+
+/* Debugging */
+.nova-bp { background: #e5484d; border-radius: 50%; width: 10px !important; height: 10px !important; margin-left: 5px; margin-top: 4px; }
+.nova-bp.nova-bp-cond { background: #f5a524; }
+.nova-bp.nova-bp-log { background: #e5484d; border-radius: 2px; transform: rotate(45deg); }
+.nova-bp.unverified { background: transparent; border: 2px solid #8b8d98; }
+.nova-debug-line { background: rgba(255, 214, 10, 0.18); outline: 1px solid rgba(255, 214, 10, 0.45); }
+.nova-debug-arrow::after { content: '➜'; color: #ffd60a; font-size: 12px; margin-left: 2px; }
+.debug, .tests { display: flex; flex-direction: column; height: 100%; overflow: auto; font-size: 12px; }
+.debug .pad, .tests .pad { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.debug .gradle-row, .tests .gradle-row { display: flex; gap: 6px; align-items: center; }
+.debug .gradle-row select, .debug .gradle-row input { flex: 1; min-width: 0; }
+.cfg-form { display: flex; flex-direction: column; gap: 4px; }
+.cfg-form label { display: flex; flex-direction: column; gap: 2px; color: #9aa3b5; font-size: 11px; }
+.cfg-form input, .cfg-form select, .cfg-form textarea { font: inherit; font-size: 12px; }
+.debug-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px; border-top: 1px solid rgba(255,255,255,0.06); border-bottom: 1px solid rgba(255,255,255,0.06); }
+.debug-status { padding: 4px 10px; color: #9aa3b5; }
+.debug-status[data-debug-state="stopped"] { color: #ffd60a; }
+.debug-status[data-debug-state="running"] { color: #7ee2a8; }
+.debug-section { padding: 2px 10px 6px; }
+.sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b93a7; margin: 6px 0 2px; }
+.scope { color: #8b93a7; margin-top: 2px; }
+.var, .row-item { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 4px; }
+.row-item.on, .var:hover, .row-item:hover { background: rgba(120,160,255,0.12); }
+.vname { color: #c6a7ff; } .vval { color: #9fe4c4; }
+.twisty { display: inline-block; width: 12px; color: #8b93a7; }
+.warn-box { background: rgba(245,194,107,0.08); border: 1px solid rgba(245,194,107,0.3); margin: 8px; border-radius: 4px; }
+.debug-console { display: flex; flex-direction: column; height: 100%; }
+.dc-out { flex: 1; overflow: auto; margin: 0; white-space: pre-wrap; font-size: 12px; }
+.dc-stderr { color: #ff8a8a; } .dc-input { color: #8fb8ff; } .dc-result { color: #9fe4c4; } .dc-console { color: #9aa3b5; }
+.debug-console input { width: 100%; font: inherit; }
+/* Testing */
+.test-summary { font-size: 12px; } .t-pass { color: #7ee2a8; } .t-fail { color: #ff8a8a; }
+.test-tree { padding: 0 6px; overflow: auto; max-height: 45%; }
+.test-file { display: flex; justify-content: space-between; cursor: pointer; margin-top: 4px; font-weight: 600; }
+.test-node { display: flex; gap: 4px; align-items: center; padding: 1px 4px 1px 14px; cursor: pointer; }
+.test-node.method { padding-left: 28px; }
+.test-node.on, .test-node:hover { background: rgba(120,160,255,0.12); }
+.test-node .actions { margin-left: auto; display: flex; gap: 4px; }
+.test-node .link { background: none; border: 0; color: #8fb8ff; cursor: pointer; padding: 0; }
+.st-passed .ticon { color: #7ee2a8; } .st-failed .ticon, .st-error .ticon { color: #ff8a8a; } .st-skipped .ticon { color: #8b93a7; } .st-running .ticon { color: #ffd60a; }
+.test-detail { padding: 6px 10px; border-top: 1px solid rgba(255,255,255,0.06); max-height: 30%; overflow: auto; }
+.t-msg { color: #ff8a8a; margin: 4px 0; } .t-stack, .t-stdout { font-size: 11px; white-space: pre-wrap; margin: 2px 0; }
+.tests .gradle-out, .debug .gradle-out { min-height: 80px; }
+.link { background: none; border: 0; color: #8fb8ff; cursor: pointer; }

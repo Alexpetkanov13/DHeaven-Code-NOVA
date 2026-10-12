@@ -58,6 +58,13 @@ export interface Events {
   'lsp.install.v1': { serverId: string; message: string; done?: boolean; error?: boolean };
   'gradle.output.v1': { runId: number; data: string };
   'gradle.exit.v1': { runId: number; code: number | null; signal: string | null; killed: boolean; problems: GradleProblem[] };
+  'debug.status.v1': DebugStatus;
+  'debug.event.v1': { sessionId: number; event: string; body: Record<string, unknown> };
+  'debug.output.v1': { sessionId: number; category: string; output: string };
+  'debug.install.v1': { message: string; done?: boolean; error?: boolean };
+  'tests.output.v1': { runId: number; data: string };
+  'tests.done.v1': { runId: number; code: number | null; killed: boolean; results: TestCase[]; error: string | null; debugPort: number | null };
+  'tests.debugReady.v1': { runId: number; port: number };
   'daemon.status.v1': { state: 'starting' | 'ready' | 'restarting' | 'failed'; message?: string };
 }
 export type EventName = keyof Events;
@@ -72,6 +79,29 @@ export const ServerStatus = z.object({
 export type ServerStatus = z.infer<typeof ServerStatus>;
 export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'workspace/executeCommand'] as const;
 const FileUri = z.string().max(8192).startsWith('file://');
+
+export const LaunchConfig = z.object({
+  id: z.string().max(64), name: z.string().min(1).max(200), type: z.literal('java'), request: z.enum(['launch', 'attach']),
+  mainClass: z.string().max(500).optional(), projectName: z.string().max(200).optional(),
+  args: z.string().max(32768).optional(), vmArgs: z.string().max(32768).optional(),
+  env: z.record(z.string().max(256), z.string().max(32768)).optional(), cwd: z.string().max(4096).optional(),
+  javaHome: z.string().max(4096).nullable().optional(), preLaunchTask: z.string().max(512).optional(),
+  hostName: z.string().max(255).optional(), port: z.number().int().min(1).max(65535).optional(),
+});
+export type LaunchConfig = z.infer<typeof LaunchConfig>;
+export const SourceBreakpoint = z.object({ line: z.number().int().min(1), condition: z.string().max(4096).optional(), logMessage: z.string().max(4096).optional(), hitCondition: z.string().max(256).optional() });
+export type SourceBreakpoint = z.infer<typeof SourceBreakpoint>;
+export const DebugStatus = z.object({
+  sessionId: z.number(), state: z.enum(['idle', 'starting', 'running', 'stopped', 'terminated']), reason: z.string().nullable(),
+  threadId: z.number().nullable(), configName: z.string().nullable(), capabilities: z.record(z.string(), z.boolean()),
+});
+export type DebugStatus = z.infer<typeof DebugStatus>;
+export const DAP_COMMANDS = ['threads', 'stackTrace', 'scopes', 'variables', 'continue', 'next', 'stepIn', 'stepOut', 'pause', 'evaluate', 'source', 'setVariable', 'exceptionInfo'] as const;
+export const TestCase = z.object({ id: z.string(), name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
+export type TestCase = z.infer<typeof TestCase>;
+export const TestNode = z.object({ id: z.string(), className: z.string(), method: z.string().nullable(), rel: z.string(), line: z.number() });
+export type TestNode = z.infer<typeof TestNode>;
+const VerifiedBp = z.object({ line: z.number(), verified: z.boolean(), message: z.string().optional() });
 
 const def = <Req extends z.ZodTypeAny, Res extends z.ZodTypeAny>(req: Req, res: Res) => ({ req, res });
 
@@ -135,6 +165,19 @@ export const channels = {
   'gradle.tasks.v1': def(z.object({}), z.array(z.object({ name: z.string(), group: z.string(), description: z.string() }))),
   'gradle.run.v1': def(z.object({ args: z.array(z.string().max(512).regex(/^[^\0\r\n]*$/)).min(1).max(64) }), z.object({ runId: z.number() })),
   'gradle.kill.v1': def(z.object({ runId: z.number() }), z.null()),
+  'debug.configs.get.v1': def(z.object({}), z.array(LaunchConfig)),
+  'debug.configs.set.v1': def(z.object({ configs: z.array(LaunchConfig).max(100) }), z.null()),
+  'debug.start.v1': def(z.object({ config: LaunchConfig }), z.object({ sessionId: z.number() })),
+  'debug.stop.v1': def(z.object({}), z.null()),
+  'debug.status.v1': def(z.object({}), DebugStatus),
+  'debug.request.v1': def(z.object({ sessionId: z.number(), command: z.enum(DAP_COMMANDS), args: z.unknown() }), z.unknown()),
+  'debug.breakpoints.get.v1': def(z.object({}), z.object({ breakpoints: z.record(z.string(), z.array(SourceBreakpoint)), verified: z.record(z.string(), z.array(VerifiedBp)) })),
+  'debug.breakpoints.set.v1': def(z.object({ path: z.string().max(4096), breakpoints: z.array(SourceBreakpoint).max(1000) }), z.array(VerifiedBp).nullable()),
+  'debug.adapter.v1': def(z.object({}), z.object({ installed: z.boolean(), name: z.string(), version: z.string(), url: z.string(), sizeHint: z.string(), license: z.string(), sha256: z.string() })),
+  'debug.install.v1': def(z.object({ consent: z.literal(true) }), z.null()),
+  'tests.discover.v1': def(z.object({}), z.array(TestNode)),
+  'tests.run.v1': def(z.object({ filters: z.array(z.string().max(1000).regex(/^[A-Za-z0-9_$.*]+$/)).max(500), debug: z.boolean().optional() }), z.object({ runId: z.number() })),
+  'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),

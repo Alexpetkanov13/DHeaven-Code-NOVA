@@ -3,7 +3,13 @@ import path from 'node:path';
 import { z } from 'zod';
 import { atomicWrite } from './atomicWrite';
 
-const WsSettings = z.object({ javaHome: z.string().nullable().default(null) });
+import { LaunchConfig, SourceBreakpoint } from '@nova/ipc-contract';
+
+const WsSettings = z.object({
+  javaHome: z.string().nullable().default(null),
+  launchConfigs: z.array(LaunchConfig).default([]),
+  breakpoints: z.record(z.string(), z.array(SourceBreakpoint)).default({}),
+});
 export type WsSettings = z.infer<typeof WsSettings>;
 
 /** Per-workspace overrides kept in userData (never written into the user's repository). */

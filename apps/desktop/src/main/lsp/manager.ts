@@ -94,7 +94,7 @@ export class LspManager {
       conn = new LspConnection(spec, () => ({
         processId: process.pid, clientInfo: { name: 'DHeaven Code NOVA', version: '0.1.0' },
         rootUri: serverUri(fileUri(root)), workspaceFolders: [{ uri: serverUri(fileUri(root)), name: root.split(/[\\/]/).pop() }],
-        initializationOptions: e.def.initOptions?.(jdk),
+        initializationOptions: e.def.initOptions?.(jdk, this.deps.serversDir),
         capabilities: {
           general: { positionEncodings: ['utf-16'] },
           workspace: { applyEdit: false, workspaceFolders: true, configuration: true, workspaceEdit: { documentChanges: true } },
@@ -197,5 +197,20 @@ export class LspManager {
       return mapUris(r, canonicalUri);
     } finally { this.inflight.delete(reqId); }
   }
+  /** Starts the server for languageId if needed and resolves once it is ready. */
+  async waitReady(languageId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const def = this.defFor(languageId); if (!def) throw new Error(`No language server for ${languageId}`);
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      if (signal?.aborted) throw new Error('Cancelled');
+      if (await this.ensure(languageId)) return;
+      const e = this.entries.get(def.id)!;
+      if (e.state === 'blocked' || e.state === 'failed') throw new Error(`${def.name}: ${e.reason ?? e.state}`);
+      if (Date.now() > end) throw new Error(`${def.name} did not become ready in ${Math.round(timeoutMs / 1000)} s`);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  /** Lets main-process features (debugger) know if a bundle-dependent server must restart to pick it up. */
+  isRunning(id: string) { const e = this.entries.get(id); return !!e && (e.state === 'ready' || e.state === 'starting' || e.state === 'restarting'); }
   cancel(reqId: string) { const f = this.inflight.get(reqId); if (f) { this.inflight.delete(reqId); f.conn.cancel(f.id); } }
 }

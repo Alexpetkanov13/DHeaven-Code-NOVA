@@ -15,6 +15,9 @@ import { LspBridge } from './lib/lsp';
 import { applyTextEdits } from './lib/textEdits';
 import { LanguageServersView } from './components/LanguageServersView';
 import { GradleView } from './components/GradleView';
+import { DebugView, DebugConsole } from './components/DebugView';
+import { TestsView } from './components/TestsView';
+import { DebugStore } from './lib/debug';
 import type { GradleProblem } from '@nova/ipc-contract';
 import { JdkPanel } from './components/JdkPanel';
 import { ProblemsPanel, type ProblemItem } from './components/ProblemsPanel';
@@ -23,7 +26,7 @@ import logo from './logo.svg';
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle';
+type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests';
 type Dialog =
   | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
   | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
@@ -43,7 +46,7 @@ export function App() {
   const [active, setActive] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
   const [view, setView] = useState<View>('explorer');
-  const [panelTab, setPanelTab] = useState<'output' | 'terminal' | 'problems'>('output');
+  const [panelTab, setPanelTab] = useState<'output' | 'terminal' | 'problems' | 'debug'>('output');
   const [problems, setProblems] = useState(new Map<string, ProblemItem[]>());
   const [palette, setPalette] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -107,6 +110,7 @@ export function App() {
     setWs(info);
     out(`Opened folder ${info.root}`);
     await loadDir('');
+    void debugStoreRef.current?.load();
     setRecent(await call('recent.list.v1', {}));
     const t = (await call('trust.get.v1', {})).trusted;
     setTrusted(t);
@@ -138,6 +142,18 @@ export function App() {
 
   // ---- LSP bridge (created once; UI callbacks read refs)
   const openFileRef = useRef(openFile); openFileRef.current = openFile;
+  const failRef = useRef<(e: unknown) => void>(() => {}); failRef.current = fail;
+  const [debugStore] = useState(() => new DebugStore({
+    openPath: async (p, line) => { const root = wsRef.current?.root; const rel = root ? uriToRel(p, root) : null; if (rel !== null) await openFileRef.current(rel, line); },
+    onError: (e) => failRef.current(e),
+    prompt: (title, initial) => new Promise((resolve) => setDialog({ kind: 'input', title, initial, submit: (v) => { setDialog(null); resolve(v); }, cancel: () => resolve(null) })),
+  }));
+  const debugStoreRef = useRef<DebugStore | null>(debugStore); debugStoreRef.current = debugStore;
+  useEffect(() => () => debugStore.dispose(), [debugStore]);
+  useEffect(() => debugStore.subscribe(() => {
+    const s = debugStore.state.status.state;
+    if (s === 'starting' || s === 'stopped') { setShowPanel(true); setPanelTab((t) => (t === 'debug' ? t : s === 'starting' ? 'debug' : t)); }
+  }), [debugStore]);
   useEffect(() => {
     const relOf = (uri: string) => (wsRef.current ? uriToRel(monaco.Uri.parse(uri).fsPath, wsRef.current.root) : null);
     const b = new LspBridge({
@@ -338,12 +354,13 @@ export function App() {
     if (!editorRef.current) {
       const ed = monaco.editor.create(hostRef.current, { theme: 'nova-dark', automaticLayout: true, fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace' });
       ed.onDidChangeCursorPosition((e) => setCursor({ ln: e.position.lineNumber, col: e.position.column }));
+      debugStore.attach(ed);
       ed.addAction({ id: 'nova.rename', label: 'Rename Symbol (with preview)', keybindings: [monaco.KeyCode.F2], contextMenuGroupId: '1_modification', run: (e) => bridgeRef.current?.rename(e) });
       editorRef.current = ed;
     }
     editorRef.current.setModel(activeTab.model);
     editorRef.current.focus();
-  }, [activeTab]);
+  }, [activeTab, debugStore]);
   useEffect(() => {
     if (!settings || !editorRef.current) return;
     editorRef.current.updateOptions({ fontSize: settings.editorFontSize, tabSize: settings.editorTabSize, wordWrap: settings.editorWordWrap ? 'on' : 'off', minimap: { enabled: settings.editorMinimap } });
@@ -421,6 +438,8 @@ export function App() {
           <button className={view === 'scm' && showSidebar ? 'on' : ''} title="Source Control (Ctrl+Shift+G)" aria-label="Source Control" onClick={() => showView('scm')}>⑂</button>
           <button className={view === 'lsp' && showSidebar ? 'on' : ''} title="Language Servers" aria-label="Language Servers" onClick={() => showView('lsp')}>◇</button>
           <button className={view === 'gradle' && showSidebar ? 'on' : ''} title="Gradle" aria-label="Gradle" onClick={() => showView('gradle')}>▲</button>
+          <button className={view === 'debug' && showSidebar ? 'on' : ''} title="Run and Debug" aria-label="Run and Debug" onClick={() => showView('debug')}>▷</button>
+          <button className={view === 'tests' && showSidebar ? 'on' : ''} title="Testing" aria-label="Testing" onClick={() => showView('tests')}>⚗</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -428,7 +447,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -444,6 +463,14 @@ export function App() {
                 <Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} />
               ) : view === 'search' ? (
                 <SearchView onOpen={(r, l, c) => void openFile(r, l, c)} onError={fail} onLog={out} />
+              ) : view === 'debug' ? (
+                <DebugView store={debugStore} trusted={trusted} hasWorkspace={!!ws} onError={fail} askInstall={(info) => setDialog({
+                  kind: 'confirm', confirmLabel: 'Download and Install',
+                  message: `Download ${info.name} ${info.version} (${info.sizeHint}, ${info.license}) from ${info.url}? It is verified against a pinned SHA-256 before use and loaded into the Java language server (which restarts). Nothing is downloaded without this confirmation.`,
+                  confirm: () => { setDialog(null); void call('debug.install.v1', { consent: true }).catch(fail); },
+                })} />
+              ) : view === 'tests' ? (
+                <TestsView trusted={trusted} hasWorkspace={!!ws} onError={fail} onLog={out} onOpen={(r, l) => void openFile(r, l)} />
               ) : view === 'gradle' ? (
                 <GradleView trusted={trusted} hasWorkspace={!!ws} onError={fail} onProblems={onGradleProblems} />
               ) : view === 'lsp' ? (
@@ -499,10 +526,13 @@ export function App() {
                 <div className="panel-tabs">
                   <button className={panelTab === 'output' ? 'on' : ''} onClick={() => setPanelTab('output')}>Output</button>
                   <button className={panelTab === 'terminal' ? 'on' : ''} onClick={() => setPanelTab('terminal')}>Terminal</button>
+                  <button className={panelTab === 'debug' ? 'on' : ''} onClick={() => setPanelTab('debug')}>Debug Console</button>
                   <button className={panelTab === 'problems' ? 'on' : ''} onClick={() => setPanelTab('problems')}>Problems{problemList.length ? <span className="count" aria-label="problem count">{problemList.length}</span> : null}</button>
                 </div>
                 {panelTab === 'problems' ? (
                   <ProblemsPanel items={problemList} onOpen={(p) => void openFile(p.rel, p.line, p.col)} />
+                ) : panelTab === 'debug' ? (
+                  <DebugConsole store={debugStore} />
                 ) : panelTab === 'output' ? (
                   <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>
                 ) : ws ? (

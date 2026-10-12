@@ -3,7 +3,10 @@ import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import type { ServerDef } from './registry';
+export interface Installable {
+  id: string; name: string; version: string; installDir(serversDir: string): string;
+  download: { url: string; sha256: string; kind: 'tar.gz' | 'zip' | 'jar' };
+}
 
 function run(cmd: string, args: string[], cwd: string) {
   return new Promise<void>((res, rej) => {
@@ -13,7 +16,7 @@ function run(cmd: string, args: string[], cwd: string) {
 }
 
 /** Downloads a pinned server archive, verifies SHA-256, extracts it. Only called after explicit user consent. */
-export async function installServer(def: ServerDef, serversDir: string, fetchFn: typeof fetch, onProgress: (msg: string) => void) {
+export async function installServer(def: Installable, serversDir: string, fetchFn: typeof fetch, onProgress: (msg: string) => void) {
   const dest = def.installDir(serversDir);
   const tmp = path.join(serversDir, `.download-${def.id}-${Date.now()}`);
   await fs.mkdir(tmp, { recursive: true });
@@ -35,7 +38,8 @@ export async function installServer(def: ServerDef, serversDir: string, fetchFn:
     onProgress(`Verified SHA-256 (${(n / 1e6).toFixed(1)} MB). Extracting…`);
     await fs.rm(dest, { recursive: true, force: true });
     await fs.mkdir(dest, { recursive: true });
-    if (def.download.kind === 'tar.gz') await run('tar', ['-xzf', file, '-C', dest], tmp);
+    if (def.download.kind === 'jar') await fs.copyFile(file, path.join(dest, path.basename(new URL(def.download.url).pathname)));
+    else if (def.download.kind === 'tar.gz') await run('tar', ['-xzf', file, '-C', dest], tmp);
     else if (process.platform === 'win32') await run('tar', ['-xf', file, '-C', dest], tmp);
     else await run('unzip', ['-q', '-o', file, '-d', dest], tmp);
     onProgress(`Installed ${def.name} ${def.version}`);

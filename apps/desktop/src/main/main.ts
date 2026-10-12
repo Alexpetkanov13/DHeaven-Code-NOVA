@@ -17,6 +17,9 @@ import { discoverJdks, probeJdk, type Jdk } from './jdk';
 import { WorkspaceSettingsStore } from './workspaceSettings';
 import type { ChildProcess } from 'node:child_process';
 import { detectGradle, killRun, listTasks, runGradle } from './gradle';
+import { DebugManager } from './dap/manager';
+import { JAVA_DEBUG, javaAdapter } from './dap/java';
+import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 
@@ -62,7 +65,19 @@ const ptys = new Set<number>();
 const gradleRuns = new Map<number, ChildProcess>();
 const gradleKilled = new Set<number>();
 let gradleSeq = 0;
-function killAllGradle() { for (const [id, p] of gradleRuns) { gradleKilled.add(id); killRun(p); } }
+let dbg!: DebugManager;
+const testRuns = new Map<number, ChildProcess>();
+/** Runs a gradle command to completion (pre-launch tasks); abortable (kills the process tree). */
+async function gradleOnce(root: string, args: string[], log: (s: string) => void, signal: AbortSignal): Promise<number | null> {
+  const info = await detectGradle(root);
+  if (!info.isGradle) throw new AppError('NOT_FOUND', 'Not a Gradle project');
+  const env = await gradleEnv(root);
+  return new Promise((resolve) => {
+    const p = runGradle(root, info, args, env, log, (code) => resolve(code));
+    signal.addEventListener('abort', () => killRun(p), { once: true });
+  });
+}
+function killAllGradle() { for (const [id, p] of [...gradleRuns, ...testRuns]) { gradleKilled.add(id); killRun(p); } }
 async function gradleEnv(root: string): Promise<NodeJS.ProcessEnv> {
   const jdk = await jdkFor(root, 17);
   return jdk ? { ...process.env, JAVA_HOME: jdk.home, PATH: path.join(jdk.home, 'bin') + path.delimiter + (process.env.PATH ?? '') } : { ...process.env };
@@ -98,6 +113,7 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   win?.setTitle(`${workspace.name} — DHeaven Code: NOVA`);
   killAllGradle();
   await lsp.setWorkspace(workspace.root);
+  await dbg.setWorkspace(workspace.root, (await wsSettings.get(workspace.root)).breakpoints);
   return workspace;
 }
 const needWs = () => { if (!workspace) throw new AppError('NO_WORKSPACE', 'No folder is open'); return workspace; };
@@ -150,7 +166,7 @@ const handlers: Handlers = {
   'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
   'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
   'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
-  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); killAllGradle(); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
+  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); killAllGradle(); await dbg.stop('Workspace trust revoked'); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
   'lsp.status.v1': async () => lsp.status(),
   'lsp.logs.v1': async ({ serverId }) => [...lsp.logs(serverId)],
   'lsp.restart.v1': async ({ serverId }) => { await requireTrust(); await lsp.restart(serverId); return null; },
@@ -203,6 +219,46 @@ const handlers: Handlers = {
     return { runId };
   },
   'gradle.kill.v1': async ({ runId }) => { const p = gradleRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
+  'debug.configs.get.v1': async () => (await wsSettings.get(needWs().root)).launchConfigs,
+  'debug.configs.set.v1': async ({ configs }) => { await wsSettings.set(needWs().root, { launchConfigs: configs }); return null; },
+  'debug.start.v1': async ({ config }) => {
+    await requireTrust();
+    try { return { sessionId: await dbg.start(config) }; } catch (e) { if (e instanceof Error && e.message === 'UNTRUSTED') throw new AppError('UNTRUSTED', 'Debugging requires a trusted workspace'); throw new AppError('CONFLICT', e instanceof Error ? e.message : String(e)); }
+  },
+  'debug.stop.v1': async () => { await dbg.stop(); return null; },
+  'debug.status.v1': async () => dbg.getStatus(),
+  'debug.request.v1': async ({ sessionId, command, args }) => {
+    try { return (await dbg.request(sessionId, command, args)) ?? null; } catch (e) { throw new AppError('LSP_ERROR', e instanceof Error ? e.message : String(e)); }
+  },
+  'debug.breakpoints.get.v1': async () => dbg.getBreakpoints(),
+  'debug.breakpoints.set.v1': async ({ path: file, breakpoints }) => { assertWithin(needWs().root, file); return dbg.setBreakpoints(file, breakpoints); },
+  'debug.adapter.v1': async () => ({ installed: JAVA_DEBUG.isInstalledSync(serversDir()), name: JAVA_DEBUG.name, version: JAVA_DEBUG.version, url: JAVA_DEBUG.download.url, sizeHint: JAVA_DEBUG.download.sizeHint, license: JAVA_DEBUG.download.license, sha256: JAVA_DEBUG.download.sha256 }),
+  'debug.install.v1': async () => {
+    const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('debug.install.v1', { message, ...extra });
+    void installServer(JAVA_DEBUG, serversDir(), (u) => net.fetch(u as string), note)
+      .then(async () => { note('Installed. Restarting the Java language server to load the debug bundle…', { done: true }); if (lsp.isRunning('jdtls')) await lsp.restart('jdtls').catch(() => {}); })
+      .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
+    return null;
+  },
+  'tests.discover.v1': async () => discoverTests(needWs().root),
+  'tests.run.v1': async ({ filters, debug }) => {
+    const root = (await requireTrust()).root; const info = await detectGradle(root);
+    if (!info.isGradle) throw new AppError('NOT_FOUND', 'Test runs need a Gradle project');
+    const runId = ++gradleSeq;
+    await clearResults(root);
+    let tail = ''; let announced = false;
+    const p = runGradle(root, info, testArgs(filters, !!debug), await gradleEnv(root), (data) => {
+      emit('tests.output.v1', { runId, data });
+      if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
+    }, (code) => {
+      const killed = gradleKilled.delete(runId); testRuns.delete(runId);
+      void readResults(root).then((results) => emit('tests.done.v1', { runId, code, killed, results, error: null, debugPort: null }))
+        .catch((e) => emit('tests.done.v1', { runId, code, killed, results: [], error: String(e), debugPort: null }));
+    });
+    testRuns.set(runId, p);
+    return { runId };
+  },
+  'tests.cancel.v1': async ({ runId }) => { const p = testRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
   'recent.list.v1': async () => store.listRecent(),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
@@ -280,6 +336,18 @@ app.whenReady().then(async () => {
     serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
     isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
   });
+  let execSeq = 0;
+  dbg = new DebugManager({
+    isTrusted: (root) => trust.isTrusted(root), emit: (n, p) => emit(n, p as never),
+    saveBreakpoints: (root, breakpoints) => wsSettings.set(root, { breakpoints }),
+    runPreLaunch: (task, log, signal) => gradleOnce(needWs().root, task.trim().split(/\s+/), log, signal),
+    adapters: { java: javaAdapter({
+      exec: (command, args, t) => lsp.request('java', `dbg-${++execSeq}`, 'workspace/executeCommand', { command, arguments: args }, t),
+      waitJdtReady: (t, s) => lsp.waitReady('java', t, s),
+      jdkFor: async (cfg) => (cfg.javaHome ? await probeJdk(cfg.javaHome, 'launch config') : null) ?? jdkFor(needWs().root, 0),
+      debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
+    }) },
+  });
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   protocol.handle('nova', async (req) => {
     const { pathname } = new URL(req.url);
@@ -295,4 +363,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { killAllGradle(); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+app.on('window-all-closed', () => { killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
