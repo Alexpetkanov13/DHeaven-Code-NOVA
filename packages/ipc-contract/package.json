@@ -1,0 +1,21 @@
+{
+  "name": "@nova/ipc-contract",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0",
+    "vitest": "^5.0.4",
+    "eslint": "^10.12.0",
+    "typescript-eslint": "^8.71.1"
+  }
+}

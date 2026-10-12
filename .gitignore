@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+release/
+test-results/
+playwright-report/
+*.log
+.e2e-tmp/

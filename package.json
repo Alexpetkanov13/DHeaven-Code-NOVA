@@ -1,0 +1,18 @@
+{
+  "name": "dheaven-code-nova",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DHeaven Code: NOVA — Build Beyond Limits.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "dev": "pnpm --filter @nova/desktop dev",
+    "build": "pnpm --filter @nova/desktop build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "e2e": "pnpm --filter @nova/desktop e2e",
+    "dist:win": "pnpm --filter @nova/desktop dist:win",
+    "dist:linux": "pnpm --filter @nova/desktop dist:linux"
+  }
+}
