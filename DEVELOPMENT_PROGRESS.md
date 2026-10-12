@@ -1,8 +1,36 @@
 # Development Progress
 
-## Status: Phases 1–4 + 6 (… + Java debugging via DAP, JUnit 5 test explorer, extensions platform) — verified on Linux; Windows untested. Phase 5 not started
+## Status: Phases 1–6 (… + Java debugging, JUnit explorer, NOVA AI, extensions platform) — verified on Linux; Windows untested
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
+
+## Phase 5 verification — NOVA AI (2026-10-12)
+Box provisioning: Ollama 0.40.3 (user-space tarball in `~/opt/ollama`, `ollama serve` on 127.0.0.1:11434). `ollama pull` failed in this sandbox (registry redirect target resolves to a non-public IP), so the model was built locally: `Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF` q4_k_m from Hugging Face (sha256 1d961463…ff32) + a ChatML Modelfile → `qwen2.5-coder:0.5b`. **All AI E2E runs below use this real model**; stub servers are only used in unit tests and are labelled as such.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build / cargo | `pnpm typecheck`, `pnpm lint`, `pnpm build`, `cargo test --release` | PASS (cargo: 7) |
+| Unit tests | `pnpm -r test` | PASS: contract 4, ai-core 15, extension-api 11, desktop 64 (+1 skipped, DAP real-adapter test) |
+| ai-core unit | (above) | redaction (keys, tokens, JWT, bearer, URL passwords, private keys, assignments; ordinary code untouched); exclusion (.env*, keys, credentials, .git/.ssh…, .gitignore, binary, oversized); untrusted wrapping can't be closed/forged from inside, system prompt rule present; code/command extraction; diff hunks (2 separate hunks, any subset applies, insert/delete/identical); Ollama NDJSON + OpenAI SSE adapters against **local stub HTTP servers**, key only in header and masked in log; retry before first token only, idle timeout, cancel |
+| Real-model adapter test | `packages/ai-core/src/real-ollama.int.test.ts` (auto-skips without Ollama) | PASS: both the Ollama adapter and the OpenAI-compatible adapter (Ollama's `/v1`) stream a real completion containing "pong"; both list models |
+| AiService unit (stub server) | `src/main/ai/ai.test.ts` | PASS 6: off by default; preview excludes `.env`/ignored/binary/traversal, redacts `sk-…`, sent body == preview, audit log == preview, one send per preview; selection from `.env.production` not sent; cancel mid-stream; keys stored as ciphertext and refused for `basic_text` / unavailable encryption; bad base URL rejected |
+| AI E2E (real local model) | `pnpm e2e e2e/ai.spec.ts` | PASS (~8 s; 5 consecutive runs): off by default (IPC refuses with `AI_ERROR`) → Enable; label `Ollama (local) · qwen2.5-coder:0.5b · local`; chat with `.env` active + open editors → preview lists `Not sent: .env — sensitive`, payload contains calc.js and not the secret → streamed (>3 token events) answer stored in history; long essay → Cancel after first tokens → `cancelled`, partial text kept; Explain Selection → payload has `<untrusted_data source="selection: calc.js …">` and the injection rule → answer; Inline Edit → 2 hunks (`return a + b;`, `return a * b;`), file unchanged until applied, accept hunk 1 + reject hunk 2 → **disk** has only `return a + b;`; audit log: exactly 4 requests, all to `127.0.0.1:11434/api/chat`, none containing the `.env` value or `API_TOKEN`; Clear AI history → empty. Test uses temperature 0 + seed 7 for determinism (same real model) |
+| All E2E | `NOVA_E2E_NO_SANDBOX=1 NOVA_SERVERS_DIR=~/nova-servers pnpm e2e` | PASS: 13/13 (5.4 min) |
+| OS keychain on this box | E2E logs `ai.getConfig.v1` | `safeStorage` reports **no encryption available (backend basic_text)** — no libsecret/KWallet in the container — so the app correctly refuses to store keys here. Real keychain storage is therefore **only unit-tested with a fake cipher**, NOT RUN against a real keyring |
+| Cloud OpenAI-compatible provider | — | NOT RUN (no key; the same adapter was exercised against Ollama's OpenAI-compatible `/v1`) |
+| Windows | — | NOT RUN |
+
+Screenshot: `/workspace/nova-ai.png`.
+
+Bugs found and fixed: pressing Enter in the Command Palette leaked a newline into the editor after the palette closed (with a selection this replaced the whole file) — affected every palette command; history was written after the done event so the panel missed the last turn.
+
+### Phase 5 limitations
+- Tiny model quality is poor (e.g. its "explain" answer misdescribes `mul`); E2E checks plumbing, not answer quality.
+- Redaction and sensitive-file rules are pattern-based; they reduce risk, they cannot catch every secret. The preview is the final check.
+- Prompt-injection wrapping is a mitigation; the guarantee is structural (no tools, diffs need approval, commands need click + confirm + trust).
+- Not covered by E2E: Explain Error from Problems, Generate Tests, Document Function, proposed-command *Run in terminal…*, terminal-output attachment, retries/timeouts against a live server (unit-tested only), provider settings UI (list models / API key fields), history across relaunch.
+- Chat only: no inline (ghost-text) completions, no embeddings/codebase search, no multi-file edits.
+- Inline edit works on whole lines of an open editor; refuses if the text changed since the request.
 
 ## Phase 6 verification — extensions platform (2026-10-12)
 
@@ -117,4 +145,4 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 - Bundle includes all Monaco languages (large); lazy loading is planned.
 
 ## Next slice
-Phase 5 (not started), or for extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
+AI: inline completions, codebase retrieval with the same exclusion rules, multi-file edit proposals, E2E for the remaining AI actions and a real keyring (Windows/macOS CI). Extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
