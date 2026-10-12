@@ -4,7 +4,12 @@ import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { channels, isChannel, type Envelope, type ErrorCode, type WorkspaceInfo } from '@nova/ipc-contract';
 import { Store } from './store';
-import { listDir, readFile, writeFile, FsError } from './workspaceFs';
+import { listDir, readFile, writeFile, FsError, ExistsError, TrashError, statEntry, createEntry, renameEntry, deleteEntry } from './workspaceFs';
+import { CoalescingWatcher } from './watcher';
+import { TrustStore } from './trust';
+import { DaemonClient, DaemonError } from './daemon';
+import { applyReplace } from './replace';
+import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 
 const CSP = [
@@ -29,6 +34,25 @@ const rendererDir = path.join(__dirname, '../renderer');
 let store: Store;
 let workspace: WorkspaceInfo | null = null;
 let win: BrowserWindow | null = null;
+let watcher: CoalescingWatcher | null = null;
+let trust: TrustStore;
+let daemon: DaemonClient;
+const ptys = new Set<number>();
+const searches = new Set<number>();
+
+function emit<E extends EventName>(name: E, payload: Events[E]) { win?.webContents.send('nova:event', name, payload); }
+
+function daemonPath() {
+  if (process.env.NOVA_DAEMON_PATH) return path.resolve(process.env.NOVA_DAEMON_PATH);
+  const exe = process.platform === 'win32' ? 'novad.exe' : 'novad';
+  return app.isPackaged ? path.join(process.resourcesPath, exe) : path.resolve(__dirname, '../../../../target/release', exe);
+}
+async function requireTrust() {
+  const ws = needWs();
+  if (!(await trust.isTrusted(ws.root))) throw new AppError('UNTRUSTED', 'This action requires a trusted workspace');
+  return ws;
+}
+function killAllPtys() { for (const id of ptys) void daemon.call('pty.kill', { ptyId: id }).catch(() => {}); ptys.clear(); }
 
 class AppError extends Error { constructor(public code: ErrorCode, m: string) { super(m); } }
 
@@ -37,6 +61,10 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   const st = await fs.stat(abs).catch(() => null);
   if (!st?.isDirectory()) throw new AppError('NOT_FOUND', 'Folder does not exist');
   workspace = { root: await fs.realpath(abs), name: path.basename(abs) };
+  watcher?.stop();
+  killAllPtys();
+  try { watcher = new CoalescingWatcher(workspace.root, (rels) => emit('fs.changed.v1', { rels })).start(); }
+  catch { watcher = null; /* watching unsupported: tree refresh falls back to manual */ }
   await store.addRecent(workspace.root, workspace.name);
   win?.setTitle(`${workspace.name} — DHeaven Code: NOVA`);
   return workspace;
@@ -64,6 +92,33 @@ const handlers: Handlers = {
     const rel = toRel(ws.root, r.filePath);
     return { rel, ...(await writeFile(ws.root, rel, content)) };
   },
+  'fs.stat.v1': async ({ rel }) => statEntry(needWs().root, rel),
+  'fs.create.v1': async ({ rel, kind }) => createEntry(needWs().root, rel, kind),
+  'fs.rename.v1': async ({ from, to }) => renameEntry(needWs().root, from, to),
+  'fs.delete.v1': async ({ rel, permanent }) => deleteEntry(needWs().root, rel, permanent, (abs) => shell.trashItem(abs)),
+  'search.start.v1': async (p) => {
+    const r = await daemon.call<{ searchId: number }>('search.start', { root: needWs().root, ...p });
+    searches.add(r.searchId);
+    return r;
+  },
+  'search.cancel.v1': async ({ searchId }) => { await daemon.call('search.cancel', { searchId }); return null; },
+  'replace.apply.v1': async (p) => applyReplace(needWs().root, p.rels, p.query, p.isRegex, p.caseSensitive, p.replacement),
+  'terminal.spawn.v1': async ({ cols, rows }) => {
+    const ws = await requireTrust();
+    const r = await daemon.call<{ ptyId: number }>('pty.spawn', { cwd: ws.root, cols, rows });
+    ptys.add(r.ptyId);
+    return r;
+  },
+  'terminal.write.v1': async ({ ptyId, data }) => { if (!ptys.has(ptyId)) throw new AppError('NOT_FOUND', 'No such terminal'); await daemon.call('pty.write', { ptyId, data }); return null; },
+  'terminal.resize.v1': async ({ ptyId, cols, rows }) => { if (ptys.has(ptyId)) await daemon.call('pty.resize', { ptyId, cols, rows }); return null; },
+  'terminal.kill.v1': async ({ ptyId }) => { if (ptys.has(ptyId)) await daemon.call('pty.kill', { ptyId }); return null; },
+  'git.status.v1': async () => daemon.call('git.status', { root: needWs().root }),
+  'git.show.v1': async ({ rel, rev }) => daemon.call('git.show', { root: needWs().root, path: rel, rev }),
+  'git.stage.v1': async ({ rels }) => { await daemon.call('git.stage', { root: needWs().root, paths: rels }); return null; },
+  'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
+  'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
+  'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
+  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) killAllPtys(); return { trusted: t }; },
   'recent.list.v1': async () => store.listRecent(),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
@@ -79,7 +134,7 @@ ipcMain.handle('nova:invoke', async (event, channel: unknown, payload: unknown):
     const result = await (handlers[channel] as (r: unknown) => Promise<unknown>)(req.data);
     return { ok: true, result: spec.res.parse(result) };
   } catch (e) {
-    const code: ErrorCode = e instanceof AppError || e instanceof PathError || e instanceof FsError ? e.code : 'INTERNAL';
+    const code: ErrorCode = e instanceof AppError || e instanceof PathError || e instanceof FsError || e instanceof ExistsError || e instanceof TrashError || e instanceof DaemonError ? e.code : 'INTERNAL';
     return { ok: false, error: { code, message: e instanceof Error ? e.message : String(e) } };
   }
 });
@@ -124,6 +179,18 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'));
+  trust = new TrustStore(app.getPath('userData'));
+  daemon = new DaemonClient(daemonPath(), (method, params) => {
+    const p = params as Record<string, unknown>;
+    if (method === 'search.matches') emit('search.matches.v1', p as unknown as Events['search.matches.v1']);
+    else if (method === 'search.done') { searches.delete(p.searchId as number); emit('search.done.v1', p as unknown as Events['search.done.v1']); }
+    else if (method === 'pty.data' && ptys.has(p.ptyId as number)) emit('terminal.data.v1', p as unknown as Events['terminal.data.v1']);
+    else if (method === 'pty.exit') { ptys.delete(p.ptyId as number); emit('terminal.exit.v1', p as unknown as Events['terminal.exit.v1']); }
+  }, (state, message) => {
+    if (state === 'restarting') { for (const id of ptys) emit('terminal.exit.v1', { ptyId: id, code: null }); ptys.clear(); }
+    emit('daemon.status.v1', message ? { state, message } : { state });
+  });
+  daemon.start();
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   protocol.handle('nova', async (req) => {
     const { pathname } = new URL(req.url);
@@ -139,4 +206,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { watcher?.stop(); daemon?.stop(); app.quit(); });

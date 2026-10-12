@@ -1,0 +1,21 @@
+[package]
+name = "novad"
+version = "0.1.0"
+edition = "2021"
+description = "DHeaven Code: NOVA native daemon (search, PTY, Git)"
+license = "UNLICENSED"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "process", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+ignore = "0.4"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+portable-pty = "0.9"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"

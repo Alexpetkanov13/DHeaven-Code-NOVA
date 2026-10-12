@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/novad"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

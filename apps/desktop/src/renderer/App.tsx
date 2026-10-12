@@ -1,34 +1,59 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DirEntry, RecentEntry, Settings, WorkspaceInfo } from '@nova/ipc-contract';
-import { call, IpcError } from './lib/ipc';
+import { call, IpcError, on } from './lib/ipc';
 import { monaco } from './lib/monaco';
 import { Explorer } from './components/Explorer';
 import { CommandPalette, type Command } from './components/CommandPalette';
 import { SettingsView } from './components/SettingsView';
 import { Splitter } from './components/Splitter';
+import { SearchView } from './components/SearchView';
+import { ScmView } from './components/ScmView';
+import { TerminalPanel } from './components/TerminalPanel';
+import { ConfirmBox, ContextMenu, InputBox, type MenuItem } from './components/InputBox';
+import { parentOf, joinRel } from './lib/paths';
 import logo from './logo.svg';
 
-interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number }
+type DiskState = 'ok' | 'changed' | 'deleted';
+interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
+interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
+type View = 'explorer' | 'search' | 'scm';
+type Dialog =
+  | { kind: 'input'; title: string; initial?: string; submit(v: string): void }
+  | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void } }
+  | null;
 const SETTINGS_TAB = '__settings__';
+const DIFF_TAB = '__diff__';
 
 export function App() {
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
+  const [trusted, setTrusted] = useState(false);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [children, setChildren] = useState(new Map<string, DirEntry[]>());
   const [expanded, setExpanded] = useState(new Set<string>());
+  const [selected, setSelected] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [diff, setDiff] = useState<DiffState | null>(null);
+  const [view, setView] = useState<View>('explorer');
+  const [panelTab, setPanelTab] = useState<'output' | 'terminal'>('output');
   const [palette, setPalette] = useState(false);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [ctx, setCtx] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showPanel, setShowPanel] = useState(true);
+  const [daemon, setDaemon] = useState('starting');
+  const [scmKey, setScmKey] = useState(0);
   const [log, setLog] = useState<{ t: string; err?: boolean }[]>([{ t: 'DHeaven Code: NOVA started.' }]);
   const [cursor, setCursor] = useState({ ln: 1, col: 1 });
   const [, bump] = useState(0);
   const hostRef = useRef<HTMLDivElement>(null);
+  const diffHostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const diffEdRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const tabsRef = useRef(tabs); tabsRef.current = tabs;
   const activeRef = useRef(active); activeRef.current = active;
+  const childrenRef = useRef(children); childrenRef.current = children;
 
   const out = useCallback((t: string, err = false) => setLog((l) => [...l.slice(-500), { t: `[${new Date().toLocaleTimeString()}] ${t}`, err }]), []);
   const fail = useCallback((e: unknown) => out(e instanceof IpcError ? `${e.code}: ${e.message}` : String(e), true), [out]);
@@ -36,44 +61,80 @@ export function App() {
   useEffect(() => {
     void call('settings.get.v1', {}).then(setSettings).catch(fail);
     void call('recent.list.v1', {}).then(setRecent).catch(fail);
-  }, [fail]);
+    return on('daemon.status.v1', (p) => { setDaemon(p.state); out(`novad ${p.state}${p.message ? `: ${p.message}` : ''}`, p.state === 'failed'); });
+  }, [fail, out]);
 
   const loadDir = useCallback(async (rel: string) => {
     const entries = await call('fs.list.v1', { rel });
     setChildren((m) => new Map(m).set(rel, entries));
   }, []);
 
+  const askTrust = useCallback((info: WorkspaceInfo) => setDialog({
+    kind: 'confirm',
+    message: `Do you trust the authors of the files in "${info.name}"? Trusting enables the terminal, Git commit (hooks) and, later, tasks and extensions. Restricted Mode still lets you browse, edit, search and stage.`,
+    confirmLabel: 'Trust Folder',
+    confirm: () => { setDialog(null); void call('trust.set.v1', { trusted: true }).then((r) => { setTrusted(r.trusted); out(`Workspace trusted: ${info.root}`); }).catch(fail); },
+    extra: { label: 'Restricted Mode', run: () => setDialog(null) },
+  }), [fail, out]);
+
   const adoptWorkspace = useCallback(async (info: WorkspaceInfo | null) => {
     if (!info) return;
     for (const t of tabsRef.current) t.model.dispose();
-    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set());
+    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set()); setDiff(null);
     setWs(info);
     out(`Opened folder ${info.root}`);
     await loadDir('');
     setRecent(await call('recent.list.v1', {}));
-  }, [loadDir, out]);
+    const t = (await call('trust.get.v1', {})).trusted;
+    setTrusted(t);
+    if (!t) askTrust(info);
+  }, [loadDir, out, askTrust]);
 
   const openFolder = useCallback(() => call('workspace.openDialog.v1', {}).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
   const openRecent = useCallback((root: string) => call('workspace.open.v1', { root }).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
 
-  const openFile = useCallback(async (rel: string) => {
+  const openFile = useCallback(async (rel: string, line?: number, col?: number) => {
     if (!tabsRef.current.some((t) => t.rel === rel)) {
       try {
         const { content, mtimeMs } = await call('fs.read.v1', { rel });
         const model = monaco.editor.createModel(content, undefined, monaco.Uri.file('/' + rel));
         model.onDidChangeContent(() => bump((n) => n + 1));
-        setTabs((ts) => [...ts, { rel, model, savedAltId: model.getAlternativeVersionId(), mtimeMs }]);
+        setTabs((ts) => [...ts, { rel, model, savedAltId: model.getAlternativeVersionId(), mtimeMs, disk: 'ok' }]);
       } catch (e) { fail(e); return; }
     }
     setActive(rel);
+    if (line) setTimeout(() => { const ed = editorRef.current; if (ed) { ed.setPosition({ lineNumber: line, column: col ?? 1 }); ed.revealLineInCenter(line); ed.focus(); } }, 50);
   }, [fail]);
 
   const toggleDir = useCallback((rel: string) => {
     setExpanded((s) => { const n = new Set(s); if (n.has(rel)) n.delete(rel); else { n.add(rel); void loadDir(rel).catch(fail); } return n; });
   }, [loadDir, fail]);
 
+  // ---- watcher: refresh loaded dirs, flag/reload open tabs changed on disk
+  useEffect(() => on('fs.changed.v1', ({ rels }) => {
+    const dirs = new Set<string>();
+    for (const r of rels) { dirs.add(parentOf(r)); dirs.add(r); }
+    for (const d of dirs) if (childrenRef.current.has(d)) void loadDir(d).catch(() => setChildren((m) => { const n = new Map(m); n.delete(d); return n; }));
+    const touched = new Set(rels);
+    for (const t of tabsRef.current) {
+      if (!touched.has(t.rel)) continue;
+      void call('fs.stat.v1', { rel: t.rel }).then(async (st) => {
+        const cur = tabsRef.current.find((x) => x.rel === t.rel);
+        if (!cur) return;
+        const dirty = cur.model.getAlternativeVersionId() !== cur.savedAltId;
+        if (!st) { setTabs((ts) => ts.map((x) => (x.rel === t.rel ? { ...x, disk: 'deleted' } : x))); return; }
+        if (Math.abs(st.mtimeMs - cur.mtimeMs) <= 1) return;
+        if (dirty) { setTabs((ts) => ts.map((x) => (x.rel === t.rel ? { ...x, disk: 'changed' } : x))); return; }
+        const { content, mtimeMs } = await call('fs.read.v1', { rel: t.rel });
+        if (cur.model.getValue() !== content) cur.model.setValue(content);
+        setTabs((ts) => ts.map((x) => (x.rel === t.rel ? { ...x, mtimeMs, disk: 'ok', savedAltId: x.model.getAlternativeVersionId() } : x)));
+      }).catch(() => {});
+    }
+    setScmKey((k) => k + 1);
+  }), [loadDir]);
+
   const markSaved = (rel: string, newRel: string, mtimeMs: number) =>
-    setTabs((ts) => ts.map((t) => (t.rel === rel ? { ...t, rel: newRel, mtimeMs, savedAltId: t.model.getAlternativeVersionId() } : t)));
+    setTabs((ts) => ts.map((t) => (t.rel === rel ? { ...t, rel: newRel, mtimeMs, disk: 'ok', savedAltId: t.model.getAlternativeVersionId() } : t)));
 
   const save = useCallback(async (force = false) => {
     const t = tabsRef.current.find((x) => x.rel === activeRef.current);
@@ -83,7 +144,10 @@ export function App() {
       markSaved(t.rel, t.rel, r.mtimeMs);
       out(`Saved ${t.rel}`);
     } catch (e) {
-      if (e instanceof IpcError && e.code === 'CONFLICT' && window.confirm(`${t.rel} changed on disk. Overwrite?`)) return save(true);
+      if (e instanceof IpcError && e.code === 'CONFLICT') {
+        setDialog({ kind: 'confirm', message: `${t.rel} changed on disk. Overwrite it with your version?`, confirmLabel: 'Overwrite', confirm: () => { setDialog(null); void save(true); } });
+        return;
+      }
       fail(e);
     }
   }, [fail, out]);
@@ -96,28 +160,107 @@ export function App() {
       if (!r) return;
       markSaved(t.rel, r.rel, r.mtimeMs); setActive(r.rel);
       out(`Saved as ${r.rel}`);
-      const parent = r.rel.includes('/') ? r.rel.slice(0, r.rel.lastIndexOf('/')) : '';
-      await loadDir(parent);
     } catch (e) { fail(e); }
-  }, [fail, out, loadDir]);
+  }, [fail, out]);
 
   const closeTab = useCallback((rel: string) => {
-    if (rel === SETTINGS_TAB) { setActive(tabsRef.current.at(-1)?.rel ?? null); return; }
+    if (rel === SETTINGS_TAB || rel === DIFF_TAB) {
+      if (rel === DIFF_TAB) setDiff((d) => { d?.original.dispose(); d?.modified.dispose(); return null; });
+      setActive(tabsRef.current.at(-1)?.rel ?? null); return;
+    }
     const t = tabsRef.current.find((x) => x.rel === rel);
     if (!t) return;
-    if (t.model.getAlternativeVersionId() !== t.savedAltId && !window.confirm(`Discard unsaved changes to ${rel}?`)) return;
-    const rest = tabsRef.current.filter((x) => x.rel !== rel);
-    t.model.dispose();
-    setTabs(rest);
-    if (activeRef.current === rel) setActive(rest.at(-1)?.rel ?? null);
+    const doClose = () => {
+      const rest = tabsRef.current.filter((x) => x.rel !== rel);
+      t.model.dispose(); setTabs(rest);
+      if (activeRef.current === rel) setActive(rest.at(-1)?.rel ?? null);
+    };
+    if (t.model.getAlternativeVersionId() !== t.savedAltId) setDialog({ kind: 'confirm', message: `Discard unsaved changes to ${rel}?`, confirmLabel: 'Discard', confirm: () => { setDialog(null); doClose(); } });
+    else doClose();
   }, []);
+
+  // ---- explorer file operations
+  const targetDir = useCallback((e: DirEntry | null) => (e ? (e.kind === 'dir' ? e.rel : parentOf(e.rel)) : ''), []);
+  const newEntry = useCallback((kind: 'file' | 'dir', dir: string) => setDialog({
+    kind: 'input', title: kind === 'file' ? 'New file name' : 'New folder name',
+    submit: (name) => {
+      setDialog(null);
+      void call('fs.create.v1', { rel: joinRel(dir, name), kind }).then(async (r) => {
+        out(`Created ${r.rel}`);
+        if (dir) setExpanded((s) => new Set(s).add(dir));
+        await loadDir(dir); await loadDir(parentOf(r.rel)).catch(() => {});
+        if (kind === 'file') await openFile(r.rel);
+      }).catch(fail);
+    },
+  }), [fail, loadDir, openFile, out]);
+  const renameEntry = useCallback((e: DirEntry) => setDialog({
+    kind: 'input', title: `Rename ${e.name}`, initial: e.name,
+    submit: (name) => {
+      setDialog(null);
+      const to = joinRel(parentOf(e.rel), name);
+      void call('fs.rename.v1', { from: e.rel, to }).then(async (r) => {
+        out(`Renamed ${e.rel} → ${r.rel}`);
+        setTabs((ts) => ts.map((t) => {
+          if (t.rel !== e.rel && !t.rel.startsWith(e.rel + '/')) return t;
+          const nrel = r.rel + t.rel.slice(e.rel.length);
+          const model = monaco.editor.createModel(t.model.getValue(), undefined, monaco.Uri.file('/' + nrel));
+          model.onDidChangeContent(() => bump((n) => n + 1));
+          const dirty = t.model.getAlternativeVersionId() !== t.savedAltId;
+          t.model.dispose();
+          return { ...t, rel: nrel, model, savedAltId: dirty ? -1 : model.getAlternativeVersionId() };
+        }));
+        setActive((a) => (a && (a === e.rel || a.startsWith(e.rel + '/')) ? r.rel + a.slice(e.rel.length) : a));
+        await loadDir(parentOf(e.rel));
+      }).catch(fail);
+    },
+  }), [fail, loadDir, out]);
+  const deleteEntry = useCallback((e: DirEntry) => setDialog({
+    kind: 'confirm', message: `Move "${e.rel}" to the trash?`, confirmLabel: 'Move to Trash',
+    confirm: () => {
+      setDialog(null);
+      const after = async (trashed: boolean) => {
+        out(`${trashed ? 'Trashed' : 'Deleted'} ${e.rel}`);
+        setTabs((ts) => ts.map((t) => (t.rel === e.rel || t.rel.startsWith(e.rel + '/') ? { ...t, disk: 'deleted' } : t)));
+        await loadDir(parentOf(e.rel));
+      };
+      void call('fs.delete.v1', { rel: e.rel, permanent: false }).then((r) => after(r.trashed)).catch((err) => {
+        if (err instanceof IpcError && err.code === 'TRASH_FAILED') {
+          setDialog({ kind: 'confirm', message: `Could not move "${e.rel}" to the trash. Delete it permanently? This cannot be undone.`, confirmLabel: 'Delete Permanently',
+            confirm: () => { setDialog(null); void call('fs.delete.v1', { rel: e.rel, permanent: true }).then((r) => after(r.trashed)).catch(fail); } });
+        } else fail(err);
+      });
+    },
+  }), [fail, loadDir, out]);
+  const onContext = useCallback((e: DirEntry | null, x: number, y: number) => {
+    const dir = targetDir(e);
+    const items: MenuItem[] = [{ label: 'New File…', run: () => newEntry('file', dir) }, { label: 'New Folder…', run: () => newEntry('dir', dir) }];
+    if (e) items.push({ label: 'Rename…', run: () => renameEntry(e) }, { label: 'Delete', danger: true, run: () => deleteEntry(e) });
+    setCtx({ x, y, items });
+  }, [targetDir, newEntry, renameEntry, deleteEntry]);
+  const selectedEntry = useCallback((): DirEntry | null => {
+    if (!selected) return null;
+    for (const list of childrenRef.current.values()) { const f = list.find((x) => x.rel === selected); if (f) return f; }
+    return null;
+  }, [selected]);
+
+  // ---- diff
+  const openDiff = useCallback(async (rel: string, staged: boolean, untracked: boolean) => {
+    try {
+      const original = untracked ? '' : (await call('git.show.v1', { rel, rev: staged ? 'HEAD' : 'INDEX' })).content;
+      const modified = staged ? (await call('git.show.v1', { rel, rev: 'INDEX' })).content : (await call('fs.read.v1', { rel }).catch(() => ({ content: '' }))).content;
+      const lang = monaco.editor.createModel('', undefined, monaco.Uri.file(`/__probe__/${Date.now()}/${rel}`));
+      const id = lang.getLanguageId(); lang.dispose();
+      setDiff((d) => { d?.original.dispose(); d?.modified.dispose(); return { rel, staged, original: monaco.editor.createModel(original, id), modified: monaco.editor.createModel(modified, id) }; });
+      setActive(DIFF_TAB);
+    } catch (e) { fail(e); }
+  }, [fail]);
 
   const updateSettings = useCallback((p: Partial<Settings>) => {
     setSettings((s) => (s ? { ...s, ...p } : s));
     void call('settings.update.v1', p).then(setSettings).catch(fail);
   }, [fail]);
 
-  // Monaco lifecycle: one editor instance, models swapped per tab. Keystrokes never cross IPC.
+  // ---- Monaco lifecycle: one editor, models swapped per tab. Keystrokes never cross IPC.
   const activeTab = tabs.find((t) => t.rel === active);
   useEffect(() => {
     if (!hostRef.current || !activeTab) return;
@@ -132,13 +275,15 @@ export function App() {
   useEffect(() => {
     if (!settings || !editorRef.current) return;
     editorRef.current.updateOptions({ fontSize: settings.editorFontSize, tabSize: settings.editorTabSize, wordWrap: settings.editorWordWrap ? 'on' : 'off', minimap: { enabled: settings.editorMinimap } });
-    activeTab?.model.updateOptions({ tabSize: settings.editorTabSize });
   }, [settings, activeTab]);
+  useEffect(() => { if (!tabs.length && editorRef.current) { editorRef.current.dispose(); editorRef.current = null; } }, [tabs.length]);
   useEffect(() => {
-    if (!activeTab && editorRef.current) { editorRef.current.dispose(); editorRef.current = null; }
-  }, [activeTab]);
+    if (!diff || active !== DIFF_TAB || !diffHostRef.current) return;
+    if (!diffEdRef.current) diffEdRef.current = monaco.editor.createDiffEditor(diffHostRef.current, { theme: 'nova-dark', automaticLayout: true, readOnly: true, originalEditable: false });
+    diffEdRef.current.setModel({ original: diff.original, modified: diff.modified });
+  }, [diff, active]);
+  useEffect(() => { if (!diff && diffEdRef.current) { diffEdRef.current.dispose(); diffEdRef.current = null; } }, [diff]);
 
-  // Persist panel sizes (debounced)
   const sizeTimer = useRef<number | undefined>(undefined);
   const resize = (key: 'sidebarWidth' | 'panelHeight', delta: number, min: number, max: number) => {
     setSettings((s) => {
@@ -149,21 +294,28 @@ export function App() {
       return { ...s, [key]: v };
     });
   };
+  const showView = (v: View) => { if (view === v && showSidebar) setShowSidebar(false); else { setView(v); setShowSidebar(true); } };
 
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
     { id: 'file.save', title: 'File: Save', keybinding: 'Ctrl+S', run: () => void save() },
     { id: 'file.saveAs', title: 'File: Save As…', keybinding: 'Ctrl+Shift+S', run: () => void saveAs() },
     { id: 'file.close', title: 'File: Close Editor', run: () => active && closeTab(active) },
+    { id: 'explorer.newFile', title: 'File: New File…', run: () => ws && newEntry('file', targetDir(selectedEntry())) },
+    { id: 'explorer.newFolder', title: 'File: New Folder…', run: () => ws && newEntry('dir', targetDir(selectedEntry())) },
     { id: 'workbench.toggleSidebar', title: 'View: Toggle Sidebar', keybinding: 'Ctrl+B', run: () => setShowSidebar((v) => !v) },
     { id: 'workbench.togglePanel', title: 'View: Toggle Panel', keybinding: 'Ctrl+J', run: () => setShowPanel((v) => !v) },
+    { id: 'workbench.search', title: 'View: Search', keybinding: 'Ctrl+Shift+F', run: () => { setView('search'); setShowSidebar(true); } },
+    { id: 'workbench.scm', title: 'View: Source Control', keybinding: 'Ctrl+Shift+G', run: () => { setView('scm'); setShowSidebar(true); } },
+    { id: 'terminal.focus', title: 'Terminal: Open Terminal', keybinding: 'Ctrl+`', run: () => { setShowPanel(true); setPanelTab('terminal'); } },
+    { id: 'workspace.trust', title: 'Workspace: Manage Trust…', run: () => ws && (trusted ? void call('trust.set.v1', { trusted: false }).then((r) => setTrusted(r.trusted)) : askTrust(ws)) },
     { id: 'workbench.settings', title: 'Preferences: Open Settings', keybinding: 'Ctrl+,', run: () => setActive(SETTINGS_TAB) },
     { id: 'mode.focus', title: 'Mode: Focus', run: () => updateSettings({ mode: 'focus' }) },
     { id: 'mode.nova', title: 'Mode: NOVA', run: () => updateSettings({ mode: 'nova' }) },
     { id: 'editor.fontUp', title: 'Editor: Increase Font Size', run: () => settings && updateSettings({ editorFontSize: Math.min(40, settings.editorFontSize + 1) }) },
     { id: 'editor.fontDown', title: 'Editor: Decrease Font Size', run: () => settings && updateSettings({ editorFontSize: Math.max(8, settings.editorFontSize - 1) }) },
     ...recent.map((r) => ({ id: `recent:${r.root}`, title: `Open Recent: ${r.name}  —  ${r.root}`, run: () => void openRecent(r.root) })),
-  ], [openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent]);
+  ], [openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
 
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
@@ -171,7 +323,12 @@ export function App() {
     else commandsRef.current.find((c) => c.id === id)?.run();
   }), []);
   useEffect(() => {
-    const kd = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); setActive(SETTINGS_TAB); } };
+    const kd = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const map: Record<string, string> = { ',': 'workbench.settings', '`': 'terminal.focus' };
+      const k = e.shiftKey ? ({ F: 'workbench.search', G: 'workbench.scm' } as Record<string, string>)[e.key.toUpperCase()] : map[e.key];
+      if (k) { e.preventDefault(); commandsRef.current.find((c) => c.id === k)?.run(); }
+    };
     window.addEventListener('keydown', kd);
     return () => window.removeEventListener('keydown', kd);
   }, []);
@@ -179,24 +336,41 @@ export function App() {
   if (!settings) return null;
   const isDirty = (t: Tab) => t.model.getAlternativeVersionId() !== t.savedAltId;
   const showSettings = active === SETTINGS_TAB;
+  const showDiff = active === DIFF_TAB && !!diff;
 
   return (
     <div className={`wb mode-${settings.mode}`}>
       <div className="wb-main">
         <nav className="activity" aria-label="Activity bar">
           <img src={logo} alt="DHeaven Code NOVA" />
-          <button title="Explorer (Ctrl+B)" aria-label="Toggle Explorer" onClick={() => setShowSidebar((v) => !v)}>☰</button>
+          <button className={view === 'explorer' && showSidebar ? 'on' : ''} title="Explorer (Ctrl+B)" aria-label="Explorer" onClick={() => showView('explorer')}>☰</button>
+          <button className={view === 'search' && showSidebar ? 'on' : ''} title="Search (Ctrl+Shift+F)" aria-label="Search" onClick={() => showView('search')}>⌕</button>
+          <button className={view === 'scm' && showSidebar ? 'on' : ''} title="Source Control (Ctrl+Shift+G)" aria-label="Source Control" onClick={() => showView('scm')}>⑂</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
         {showSidebar && (
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
-              <div className="sidebar-title">Explorer{ws ? ` — ${ws.name}` : ''}</div>
-              {ws ? (
-                <Explorer children={children} expanded={expanded} selected={active} onToggle={toggleDir} onOpen={(r) => void openFile(r)} />
-              ) : (
+              <div className="sidebar-title">
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : 'Source Control'}</span>
+                {view === 'explorer' && ws && (
+                  <span>
+                    <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
+                    <button className="icon-btn" title="New Folder" aria-label="New Folder" onClick={() => newEntry('dir', targetDir(selectedEntry()))}>▣</button>
+                    <button className="icon-btn" title="Refresh" aria-label="Refresh Explorer" onClick={() => { for (const d of children.keys()) void loadDir(d).catch(() => {}); }}>↻</button>
+                  </span>
+                )}
+              </div>
+              {ws && !trusted && <div className="banner">Restricted Mode <button className="btn small" onClick={() => askTrust(ws)}>Trust…</button></div>}
+              {!ws ? (
                 <div style={{ padding: 12 }}><button className="btn" onClick={openFolder}>Open Folder</button></div>
+              ) : view === 'explorer' ? (
+                <Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} />
+              ) : view === 'search' ? (
+                <SearchView onOpen={(r, l, c) => void openFile(r, l, c)} onError={fail} onLog={out} />
+              ) : (
+                <ScmView refreshKey={scmKey} trusted={trusted} onOpenDiff={(r, s, u) => void openDiff(r, s, u)} onError={fail} onLog={out} />
               )}
             </aside>
             <Splitter dir="v" onDrag={(d) => resize('sidebarWidth', d, 160, 800)} />
@@ -204,21 +378,24 @@ export function App() {
         )}
         <main className="center">
           <section className="editor-area">
-            {(tabs.length > 0 || showSettings) && (
+            {(tabs.length > 0 || showSettings || diff) && (
               <div className="tabs" role="tablist">
                 {tabs.map((t) => (
-                  <div key={t.rel} role="tab" aria-selected={t.rel === active} data-rel={t.rel} className={`tab${t.rel === active ? ' active' : ''}`} onClick={() => setActive(t.rel)} title={t.rel}>
+                  <div key={t.rel} role="tab" aria-selected={t.rel === active} data-rel={t.rel} className={`tab${t.rel === active ? ' active' : ''}`} onClick={() => setActive(t.rel)} title={t.disk === 'ok' ? t.rel : `${t.rel} — ${t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}`}>
                     {t.rel.split('/').pop()}
+                    {t.disk !== 'ok' && <span className="disk" data-disk={t.disk} aria-label={t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}>⚠</span>}
                     {isDirty(t) ? <span className="dirty" aria-label="unsaved changes" /> : null}
                     <button className="close" aria-label={`Close ${t.rel}`} onClick={(e) => { e.stopPropagation(); closeTab(t.rel); }}>×</button>
                   </div>
                 ))}
+                {diff && <div role="tab" aria-selected={showDiff} className={`tab${showDiff ? ' active' : ''}`} onClick={() => setActive(DIFF_TAB)}>{diff.rel.split('/').pop()} ({diff.staged ? 'Staged' : 'Working Tree'})<button className="close" aria-label="Close Diff" onClick={(e) => { e.stopPropagation(); closeTab(DIFF_TAB); }}>×</button></div>}
                 {showSettings && <div role="tab" aria-selected className="tab active">Settings<button className="close" aria-label="Close Settings" onClick={() => closeTab(SETTINGS_TAB)}>×</button></div>}
               </div>
             )}
             {showSettings ? <SettingsView settings={settings} onChange={updateSettings} /> : null}
-            <div className="editor-host" ref={hostRef} style={{ display: activeTab && !showSettings ? 'block' : 'none' }} />
-            {!activeTab && !showSettings && (
+            <div className="editor-host" ref={hostRef} style={{ display: activeTab && !showSettings && !showDiff ? 'block' : 'none' }} />
+            <div className="editor-host" ref={diffHostRef} aria-label="Diff editor" style={{ display: showDiff ? 'block' : 'none' }} />
+            {!activeTab && !showSettings && !showDiff && (
               <div className="welcome">
                 <img src={logo} alt="" />
                 <h1>DHeaven Code: NOVA</h1>
@@ -236,8 +413,15 @@ export function App() {
             <>
               <Splitter dir="h" onDrag={(d) => resize('panelHeight', -d, 80, 800)} />
               <section className="panel" style={{ height: settings.panelHeight }} aria-label="Panel">
-                <div className="panel-head">Output</div>
-                <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>
+                <div className="panel-tabs">
+                  <button className={panelTab === 'output' ? 'on' : ''} onClick={() => setPanelTab('output')}>Output</button>
+                  <button className={panelTab === 'terminal' ? 'on' : ''} onClick={() => setPanelTab('terminal')}>Terminal</button>
+                </div>
+                {panelTab === 'output' ? (
+                  <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>
+                ) : ws ? (
+                  <TerminalPanel trusted={trusted} workspaceKey={ws.root} onError={fail} onTrust={() => askTrust(ws)} />
+                ) : <div className="trust-note muted">Open a folder to use the terminal.</div>}
               </section>
             </>
           )}
@@ -246,13 +430,18 @@ export function App() {
       <footer className="status" role="status">
         <span className="brand">◆ NOVA</span>
         <span>{ws ? ws.name : 'No folder'}</span>
+        {ws && <span>{trusted ? 'Trusted' : 'Restricted'}</span>}
+        <span title="Native daemon">novad: {daemon}</span>
         <span className="grow" />
-        {activeTab && <span>Ln {cursor.ln}, Col {cursor.col}</span>}
-        {activeTab && <span>{activeTab.model.getLanguageId()}</span>}
-        {activeTab && <span>{isDirty(activeTab) ? 'Unsaved' : 'Saved'}</span>}
+        {activeTab && !showDiff && <span>Ln {cursor.ln}, Col {cursor.col}</span>}
+        {activeTab && !showDiff && <span>{activeTab.model.getLanguageId()}</span>}
+        {activeTab && !showDiff && <span>{isDirty(activeTab) ? 'Unsaved' : 'Saved'}</span>}
         <span>{settings.mode === 'focus' ? 'Focus' : 'NOVA'} mode</span>
       </footer>
       {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); editorRef.current?.focus(); }} />}
+      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}
+      {dialog?.kind === 'input' && <InputBox title={dialog.title} initial={dialog.initial ?? ''} onSubmit={dialog.submit} onCancel={() => setDialog(null)} />}
+      {dialog?.kind === 'confirm' && <ConfirmBox message={dialog.message} confirmLabel={dialog.confirmLabel} onConfirm={dialog.confirm} onCancel={() => setDialog(null)} {...(dialog.extra ? { extra: dialog.extra } : {})} />}
     </div>
   );
 }

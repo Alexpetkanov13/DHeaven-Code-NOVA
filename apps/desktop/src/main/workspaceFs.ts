@@ -39,3 +39,56 @@ export async function writeFile(root: string, rel: string, content: string, expe
   await atomicWrite(abs, content);
   return { mtimeMs: (await fs.stat(abs)).mtimeMs };
 }
+
+export class ExistsError extends Error { code = 'EXISTS' as const; }
+
+function validName(rel: string) {
+  const name = rel.split('/').pop() ?? '';
+  if (!name || name === '.' || name === '..' || /[<>:"|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name)) {
+    throw new FsError('NOT_FOUND', `Invalid file name: ${name}`); // reject names Windows can't hold, too
+  }
+}
+
+export async function statEntry(root: string, rel: string) {
+  const abs = await resolveInsideReal(root, rel);
+  const st = await fs.stat(abs).catch(() => null);
+  return st ? { mtimeMs: st.mtimeMs, kind: st.isDirectory() ? ('dir' as const) : ('file' as const) } : null;
+}
+
+export async function createEntry(root: string, rel: string, kind: 'file' | 'dir') {
+  validName(rel);
+  const abs = await resolveInsideReal(root, rel);
+  if (rel === '' ) throw new FsError('NOT_FOUND', 'Empty path');
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  try {
+    if (kind === 'dir') await fs.mkdir(abs);
+    else await (await fs.open(abs, 'wx')).close();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new ExistsError(`${rel} already exists`);
+    throw e;
+  }
+  return { rel: toRel(root, abs) };
+}
+
+export async function renameEntry(root: string, from: string, to: string) {
+  validName(to);
+  if (!from) throw new FsError('NOT_FOUND', 'Cannot rename workspace root');
+  const a = await resolveInsideReal(root, from);
+  const b = await resolveInsideReal(root, to);
+  const exists = await fs.lstat(b).then(() => true, () => false);
+  // allow case-only renames on case-insensitive filesystems
+  if (exists && a.toLowerCase() !== b.toLowerCase()) throw new ExistsError(`${to} already exists`);
+  await fs.mkdir(path.dirname(b), { recursive: true });
+  await fs.rename(a, b);
+  return { rel: toRel(root, b) };
+}
+
+export async function deleteEntry(root: string, rel: string, permanent: boolean, trash: (abs: string) => Promise<void>) {
+  if (!rel) throw new FsError('NOT_FOUND', 'Cannot delete workspace root');
+  const abs = await resolveInsideReal(root, rel);
+  await fs.lstat(abs).catch(() => { throw new FsError('NOT_FOUND', `Not found: ${rel}`); });
+  if (permanent) { await fs.rm(abs, { recursive: true, force: false }); return { trashed: false }; }
+  try { await trash(abs); } catch (e) { throw new TrashError(`Could not move to trash: ${e instanceof Error ? e.message : e}`); }
+  return { trashed: true };
+}
+export class TrashError extends Error { code = 'TRASH_FAILED' as const; }

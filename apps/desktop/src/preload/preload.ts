@@ -9,5 +9,10 @@ const api: NovaApi = {
     ipcRenderer.on('nova:menu', l);
     return () => { ipcRenderer.removeListener('nova:menu', l); };
   },
+  onEvent: (name, cb) => {
+    const l = (_e: unknown, n: unknown, payload: unknown) => { if (n === name) cb(payload as never); };
+    ipcRenderer.on('nova:event', l);
+    return () => { ipcRenderer.removeListener('nova:event', l); };
+  },
 };
 contextBridge.exposeInMainWorld('nova', Object.freeze(api));
