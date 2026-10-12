@@ -469,9 +469,7 @@ export function App() {
                   message: `Download ${info.name} ${info.version} (${info.sizeHint}, ${info.license}) from ${info.url}? It is verified against a pinned SHA-256 before use and loaded into the Java language server (which restarts). Nothing is downloaded without this confirmation.`,
                   confirm: () => { setDialog(null); void call('debug.install.v1', { consent: true }).catch(fail); },
                 })} />
-              ) : view === 'tests' ? (
-                <TestsView trusted={trusted} hasWorkspace={!!ws} onError={fail} onLog={out} onOpen={(r, l) => void openFile(r, l)} />
-              ) : view === 'gradle' ? (
+              ) : view === 'tests' ? null : view === 'gradle' ? (
                 <GradleView trusted={trusted} hasWorkspace={!!ws} onError={fail} onProblems={onGradleProblems} />
               ) : view === 'lsp' ? (
                 <LanguageServersView trusted={trusted} onError={fail} askInstall={(sv) => setDialog({
@@ -482,6 +480,10 @@ export function App() {
               ) : (
                 <ScmView refreshKey={scmKey} trusted={trusted} onOpenDiff={(r, s, u) => void openDiff(r, s, u)} onError={fail} onLog={out} />
               )}
+              {/* Kept mounted so a running test session keeps receiving results while another view is shown. */}
+              <div style={{ display: view === 'tests' ? 'contents' : 'none' }}>
+                <TestsView trusted={trusted} hasWorkspace={!!ws} onError={fail} onLog={out} onOpen={(r, l) => void openFile(r, l)} />
+              </div>
             </aside>
             <Splitter dir="v" onDrag={(d) => resize('sidebarWidth', d, 160, 800)} />
           </>

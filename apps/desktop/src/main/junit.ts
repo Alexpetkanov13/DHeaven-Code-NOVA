@@ -62,6 +62,11 @@ const text = (s: string) => unesc(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_m, 
 /** Parses Gradle/Surefire JUnit XML (`TEST-*.xml`). Method names drop the trailing `()` Gradle adds for JUnit 5. */
 export function parseJUnitXml(xml: string): TestCase[] {
   const out: TestCase[] = [];
+  // Gradle writes one class-level <system-out> after the testcases unless reports.junitXml.outputPerTestCase = true.
+  const lastCase = Math.max(xml.lastIndexOf('</testcase>'), xml.lastIndexOf('<testcase'));
+  const tail = lastCase >= 0 ? xml.slice(xml.indexOf('>', xml.indexOf('</testcase>', lastCase) >= 0 ? xml.indexOf('</testcase>', lastCase) : lastCase) + 1) : '';
+  const suiteMatch = /<system-out>([\s\S]*?)<\/system-out>/.exec(tail);
+  const suiteStdout = suiteMatch ? text(suiteMatch[1]!).trim() : '';
   for (const m of xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
     const a = attrs(m[1]!); const body = m[3] ?? '';
     const name = (a.name ?? '').replace(/\(\)$/, '');
@@ -74,7 +79,7 @@ export function parseJUnitXml(xml: string): TestCase[] {
       status: fail ? (fail[1] === 'error' ? 'error' : 'failed') : skipped ? 'skipped' : 'passed',
       message: fail ? attrs(fail[2]!).message ?? null : skipped ? attrs(/<skipped\b([^>]*)/.exec(body)![1]!).message ?? null : null,
       stack: fail?.[3] ? text(fail[3]).trim() : null,
-      stdout: sysout ? text(sysout[1]!) : '',
+      stdout: sysout ? text(sysout[1]!) : suiteStdout ? `(class-level output)\n${suiteStdout}` : '',
     });
   }
   return out;
