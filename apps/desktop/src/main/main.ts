@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -23,6 +23,9 @@ import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } f
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 import { ExtensionStore } from './ext/store';
+import { AiService } from './ai/service';
+import { KeyStore } from './ai/keys';
+import { AiHistory } from './ai/history';
 import { ExtensionService } from './ext/service';
 import { PERMISSIONS, type Permission } from '@nova/extension-api';
 
@@ -55,6 +58,8 @@ let lsp: LspManager;
 const serversDir = () => (process.env.NOVA_SERVERS_DIR ? path.resolve(process.env.NOVA_SERVERS_DIR) : path.join(app.getPath('userData'), 'servers'));
 let wsSettings: WorkspaceSettingsStore;
 let exts: ExtensionService;
+let ai: AiService;
+async function aiCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('AI_ERROR', e instanceof Error ? e.message : String(e)); } }
 let extStore: ExtensionStore;
 let wsTrusted = false;
 let permSeq = 0;
@@ -278,6 +283,15 @@ const handlers: Handlers = {
   },
   'tests.cancel.v1': async ({ runId }) => { const p = testRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
   'recent.list.v1': async () => store.listRecent(),
+  'ai.getConfig.v1': async () => ai.publicConfig(),
+  'ai.setConfig.v1': async (patch) => aiCall(() => ai.setConfig(patch)),
+  'ai.setKey.v1': async ({ providerId, key }) => aiCall(async () => { await ai.setKey(providerId, key); return null; }),
+  'ai.listModels.v1': async ({ providerId }) => aiCall(() => ai.listModels(providerId)),
+  'ai.prepare.v1': async (req) => aiCall(() => ai.prepare(req)) as never,
+  'ai.send.v1': async ({ id }) => aiCall(() => ai.send(id)),
+  'ai.cancel.v1': async ({ requestId }) => { ai.cancel(requestId); return null; },
+  'ai.history.v1': async () => ai.history(),
+  'ai.clearHistory.v1': async () => { await ai.clearHistory(); return null; },
   'ext.list.v1': async () => extCall(() => exts.list()),
   'ext.contributions.v1': async () => extCall(() => exts.contributions()) as never,
   'ext.outputChannels.v1': async () => exts.outputChannels(),
@@ -390,6 +404,14 @@ app.whenReady().then(async () => {
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
     }) },
   });
+  const aiDir = path.join(app.getPath('userData'), 'ai');
+  ai = new AiService({
+    dir: aiDir, keys: new KeyStore(aiDir, safeStorage), history: new AiHistory(path.join(aiDir, 'history')),
+    workspace: () => (workspace ? { root: workspace.root, trusted: wsTrusted } : null),
+    // Local providers: Node fetch (no proxy); remote: Chromium net stack (honours system proxy settings).
+    fetch: (u, i) => (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/.test(String(u)) ? globalThis.fetch(u, i) : net.fetch(String(u), i as RequestInit)), emit: (n, p) => emit(n as EventName, p as never),
+    requestLog: process.env.NOVA_AI_REQUEST_LOG ? path.resolve(process.env.NOVA_AI_REQUEST_LOG) : null,
+  });
   extStore = new ExtensionStore(extDir(), app.getVersion());
   await extStore.load();
   exts = new ExtensionService({
@@ -420,4 +442,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+app.on('window-all-closed', () => { ai?.cancelAll(); void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });

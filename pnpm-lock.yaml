@@ -10,6 +10,9 @@ importers:
 
   apps/desktop:
     devDependencies:
+      '@nova/ai-core':
+        specifier: workspace:*
+        version: link:../../packages/ai-core
       '@nova/extension-api':
         specifier: workspace:*
         version: link:../../packages/extension-api

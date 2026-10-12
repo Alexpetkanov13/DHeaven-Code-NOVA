@@ -92,3 +92,12 @@ export async function deleteEntry(root: string, rel: string, permanent: boolean,
   return { trashed: true };
 }
 export class TrashError extends Error { code = 'TRASH_FAILED' as const; }
+
+/** Reads at most `limit` bytes; reports the real size so callers can refuse oversized files without loading them. */
+export async function readFileHead(root: string, rel: string, limit: number): Promise<{ bytes: Uint8Array; size: number }> {
+  const abs = await resolveInsideReal(root, rel);
+  const st = await fs.stat(abs).catch(() => { throw new FsError('NOT_FOUND', `Not found: ${rel}`); });
+  if (!st.isFile()) throw new FsError('NOT_FOUND', `Not a file: ${rel}`);
+  const fh = await fs.open(abs, 'r');
+  try { const buf = Buffer.alloc(Math.min(st.size, limit)); await fh.read(buf, 0, buf.length, 0); return { bytes: buf, size: st.size }; } finally { await fh.close(); }
+}

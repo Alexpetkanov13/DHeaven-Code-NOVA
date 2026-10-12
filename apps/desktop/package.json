@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@nova/extension-api": "workspace:*",
+    "@nova/ai-core": "workspace:*",
     "@nova/ipc-contract": "workspace:*",
     "@playwright/test": "^1.64.0",
     "@types/node": "^22.9.0",

@@ -68,6 +68,9 @@ export interface Events {
   'tests.done.v1': { runId: number; code: number | null; killed: boolean; results: TestCase[]; error: string | null; debugPort: number | null };
   'tests.debugReady.v1': { runId: number; port: number };
   'daemon.status.v1': { state: 'starting' | 'ready' | 'restarting' | 'failed'; message?: string };
+  'ai.token.v1': { requestId: string; token: string };
+  'ai.status.v1': { requestId: string; message: string };
+  'ai.done.v1': AiDone;
   'ext.changed.v1': Record<string, never>;
   'ext.host.v1': ExtHostInfo;
   'ext.output.v1': { key: string; extId: string; extName: string; name: string; text: string; show: boolean };
@@ -76,6 +79,16 @@ export interface Events {
   'ext.treeChanged.v1': { viewId: string };
   'ext.permissionRequest.v1': { requestId: number; extId: string; extName: string; permission: string; description: string };
 }
+export interface AiProviderInfo { id: string; kind: 'ollama' | 'openai'; label: string; baseUrl: string; model: string; temperature?: number; seed?: number; hasKey: boolean; local: boolean }
+export interface AiConfigInfo { enabled: boolean; activeProvider: string; providers: AiProviderInfo[]; timeoutMs: number; idleTimeoutMs: number; retries: number; includeHistory: boolean; keychain: { available: boolean; backend: string; reason: string | null } }
+export interface AiPreview {
+  id: string; action: string; provider: { id: string; label: string; kind: string; baseUrl: string; model: string; local: boolean };
+  messages: { role: string; content: string }[];
+  included: { source: string; chars: number; redactions: { kind: string; count: number }[] }[];
+  excluded: { rel: string; reason: string; detail: string }[];
+}
+export interface AiDone { requestId: string; text: string; error: string | null; cancelled: boolean; code: string | null; commands: string[]; model: string; usage: { prompt: number | null; completion: number | null } | null }
+export interface AiHistoryEntry { id: string; at: string; role: 'user' | 'assistant'; action: string; content: string; provider: string; model: string; error?: string }
 export interface ExtHostInfo { state: string; pid: number | null; startupMs: number | null; error: string | null; crashes: number; logs: string[] }
 export interface ExtStatusItem { key: string; extId: string; text: string; tooltip?: string; command?: string; visible: boolean }
 export interface ExtInfo {
@@ -213,6 +226,25 @@ export const channels = {
   'tests.run.v1': def(z.object({ filters: z.array(z.string().max(1000).regex(/^[A-Za-z0-9_$.*]+$/)).max(500), debug: z.boolean().optional() }), z.object({ runId: z.number() })),
   'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
+  'ai.getConfig.v1': def(z.object({}), z.custom<AiConfigInfo>()),
+  'ai.setConfig.v1': def(z.object({
+    enabled: z.boolean().optional(), activeProvider: z.string().max(40).optional(), includeHistory: z.boolean().optional(),
+    timeoutMs: z.number().int().optional(), idleTimeoutMs: z.number().int().optional(), retries: z.number().int().optional(),
+    providers: z.array(z.object({ id: z.string().max(40), kind: z.enum(['ollama', 'openai']), label: z.string().max(60), baseUrl: z.string().max(500), model: z.string().max(200), temperature: z.number().optional(), seed: z.number().int().optional() })).max(20).optional(),
+  }), z.custom<AiConfigInfo>()),
+  'ai.setKey.v1': def(z.object({ providerId: z.string().max(40), key: z.string().max(4096).nullable() }), z.null()),
+  'ai.listModels.v1': def(z.object({ providerId: z.string().max(40) }), z.array(z.string())),
+  'ai.prepare.v1': def(z.object({
+    action: z.enum(['chat', 'explainSelection', 'explainError', 'generateTests', 'documentFunction', 'inlineEdit']), prompt: z.string().max(20_000).optional(),
+    files: z.array(z.string().max(4096)).max(20).optional(),
+    selection: z.object({ rel: z.string().max(4096), text: z.string().max(200_000), startLine: z.number().int(), languageId: z.string().max(64).optional() }).optional(),
+    diagnostic: z.object({ rel: z.string().max(4096), line: z.number().int(), col: z.number().int(), severity: z.string().max(20), message: z.string().max(10_000), source: z.string().max(100) }).optional(),
+    terminal: z.string().max(100_000).optional(),
+  }), z.custom<AiPreview>()),
+  'ai.send.v1': def(z.object({ id: z.string().max(64) }), z.object({ requestId: z.string() })),
+  'ai.cancel.v1': def(z.object({ requestId: z.string().max(64) }), z.null()),
+  'ai.history.v1': def(z.object({}), z.custom<AiHistoryEntry[]>()),
+  'ai.clearHistory.v1': def(z.object({}), z.null()),
   'ext.list.v1': def(z.object({}), z.custom<ExtInfo[]>()),
   'ext.contributions.v1': def(z.object({}), z.custom<ExtContributions>()),
   'ext.outputChannels.v1': def(z.object({}), z.custom<{ key: string; extId: string; name: string; text: string }[]>()),
@@ -240,7 +272,7 @@ export type ChannelName = keyof Channels;
 export type Req<C extends ChannelName> = z.input<Channels[C]['req']>;
 export type Res<C extends ChannelName> = z.output<Channels[C]['res']>;
 
-export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'INTERNAL']);
+export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'AI_ERROR', 'INTERNAL']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export type Envelope<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string } };
