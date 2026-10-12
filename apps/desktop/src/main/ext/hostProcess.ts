@@ -32,6 +32,7 @@ export class ExtensionHost extends EventEmitter {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'json', detached: process.platform !== 'win32', windowsHide: true,
     });
     this.proc = p; this.pid = p.pid ?? null; this.startedAt = t0;
+    p.on('error', (e) => this.emit('log', null, 'error', `host process error: ${e.message}`));
     p.stdout?.on('data', (b: Buffer) => this.emit('log', null, 'info', b.toString('utf8').trimEnd()));
     p.stderr?.on('data', (b: Buffer) => this.emit('log', null, 'warn', b.toString('utf8').trimEnd()));
     return new Promise<void>((resolve, reject) => {
@@ -68,7 +69,7 @@ export class ExtensionHost extends EventEmitter {
     } else if (m.t === 'log') this.emit('log', m.extId, m.level, m.message);
     else if (m.t === 'registered') this.emit('registered', m.extId, m.kind, m.key);
   }
-  private send(m: MainToHost) { try { this.proc?.send(m); } catch { /* host gone */ } }
+  private send(m: MainToHost) { try { if (this.proc?.connected) this.proc.send(m, (err) => { if (err) this.emit('log', null, 'warn', `send failed: ${err.message}`); }); } catch { /* host gone */ } }
 
   /** A request that times out means the host is stuck in extension code: the host is killed and the extension blamed. */
   request<T = unknown>(method: ReqMethod, params: unknown, extId: string | null, timeoutMs = 10_000): Promise<T> {

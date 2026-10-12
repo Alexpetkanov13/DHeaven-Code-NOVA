@@ -176,3 +176,37 @@ button { font: inherit; color: inherit; }
 .t-msg { color: #ff8a8a; margin: 4px 0; } .t-stack, .t-stdout { font-size: 11px; white-space: pre-wrap; margin: 2px 0; }
 .tests .gradle-out, .debug .gradle-out { min-height: 80px; }
 .link { background: none; border: 0; color: #8fb8ff; cursor: pointer; }
+/* ---- Extensions */
+.ext-view { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.ext-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ext-host { border: 1px solid var(--nova-border); border-radius: 6px; padding: 6px 8px; }
+.ext-host .link, button.link { background: none; border: 0; color: var(--nova-cyan); cursor: pointer; padding: 0 0 0 6px; font: inherit; }
+.ext-list { list-style: none; margin: 0; padding: 0; }
+.ext-list li { padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.ext-list li:hover { background: rgba(63,224,255,.08); }
+.ext-list li.on { background: rgba(155,107,255,.18); box-shadow: inset 2px 0 0 var(--nova-violet); }
+.ext-name small { color: var(--nova-text-dim); }
+.ext-status.s-active { color: #7FF0C8; } .ext-status.s-error, .ext-status.s-quarantined { color: var(--nova-danger); } .ext-status.s-blocked, .ext-status.s-disabled { color: var(--nova-text-dim); }
+.ext-details h3 { margin: 4px 0; font-size: 14px; } .ext-details h3 small { color: var(--nova-text-dim); font-weight: normal; }
+.ext-details h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--nova-text-dim); }
+.ext-details dl { display: grid; grid-template-columns: 90px 1fr; gap: 2px 8px; margin: 0; }
+.ext-details dt { color: var(--nova-text-dim); } .ext-details dd { margin: 0; overflow-wrap: anywhere; }
+.ext-details .mono, .ext-log { font-family: var(--nova-font-mono); font-size: 11px; }
+.ext-log { max-height: 160px; overflow: auto; background: var(--nova-graphite-900); border: 1px solid var(--nova-border); border-radius: 6px; padding: 6px; white-space: pre-wrap; margin: 0; }
+.ext-perms { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.ext-perms select, .out-select { background: var(--nova-graphite-900); color: var(--nova-text); border: 1px solid var(--nova-border); border-radius: 4px; margin-left: 6px; }
+.ext-setting { display: flex; flex-direction: column; gap: 2px; }
+.ext-setting input:not([type=checkbox]) { background: var(--nova-graphite-900); color: var(--nova-text); border: 1px solid var(--nova-border); border-radius: 4px; padding: 2px 6px; }
+.btn.danger { color: var(--nova-danger); }
+.small { font-size: 12px; } .err { color: var(--nova-danger); }
+.ext-tree { border-top: 1px solid var(--nova-border); }
+.ext-tree-head { width: 100%; text-align: left; background: none; border: 0; color: var(--nova-text-dim); padding: 6px 10px; cursor: pointer; font: inherit; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.ext-tree ul { list-style: none; margin: 0; padding: 0 0 6px 22px; } .ext-tree li { padding: 2px 0; cursor: pointer; }
+.panel-output { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.panel-output .out-select { align-self: flex-end; margin: 2px 8px; }
+pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-mono); }
+.status-item { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0 4px; }
+.status-item:hover { color: var(--nova-cyan); }
+.toasts { position: fixed; right: 16px; bottom: 36px; display: flex; flex-direction: column; gap: 6px; z-index: 70; }
+.toast { background: var(--nova-navy-900); border: 1px solid var(--nova-border); border-left: 3px solid var(--nova-cyan); border-radius: 6px; padding: 8px 12px; box-shadow: var(--nova-glow); max-width: 360px; }
+.toast.t-error { border-left-color: var(--nova-danger); } .toast.t-warning { border-left-color: #FFB86B; }

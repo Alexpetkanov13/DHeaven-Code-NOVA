@@ -97,6 +97,7 @@ function loadModule(ext: HostExtension): ExtensionModule {
     const fn = vm.runInContext(`(function (module, exports, require, __filename, __dirname) {${src}\n})`, ctx, { filename: abs, timeout: 2000 }) as (...a: unknown[]) => void;
     const req = (spec: string) => {
       const name = spec.replace(/^node:/, '');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- allowlisted pure builtins only
       if (SAFE_BUILTINS.has(name)) return require(name);
       if (spec.startsWith('./') || spec.startsWith('../')) {
         const base = path.resolve(path.dirname(abs), spec);
@@ -114,6 +115,7 @@ function loadModule(ext: HostExtension): ExtensionModule {
 async function handle(m: Extract<MainToHost, { t: 'req' }>): Promise<unknown> {
   switch (m.method) {
     case 'ping': return 'pong';
+    case 'configChanged': { const l = loaded.get(m.params.extId); if (l) l.ext.config = m.params.config; return null; }
     case 'activate': {
       const { ext } = m.params;
       if (loaded.has(ext.id)) return { already: true };

@@ -22,6 +22,9 @@ import { JAVA_DEBUG, javaAdapter } from './dap/java';
 import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
+import { ExtensionStore } from './ext/store';
+import { ExtensionService } from './ext/service';
+import { PERMISSIONS, type Permission } from '@nova/extension-api';
 
 const CSP = [
   "default-src 'self'",
@@ -51,6 +54,18 @@ let daemon: DaemonClient;
 let lsp: LspManager;
 const serversDir = () => (process.env.NOVA_SERVERS_DIR ? path.resolve(process.env.NOVA_SERVERS_DIR) : path.join(app.getPath('userData'), 'servers'));
 let wsSettings: WorkspaceSettingsStore;
+let exts: ExtensionService;
+let extStore: ExtensionStore;
+let wsTrusted = false;
+let permSeq = 0;
+const permWaiters = new Map<number, (a: { grant: 'granted' | 'denied'; remember: boolean }) => void>();
+const extDir = () => (process.env.NOVA_EXTENSIONS_DIR ? path.resolve(process.env.NOVA_EXTENSIONS_DIR) : path.join(app.getPath('userData'), 'extensions'));
+async function extCall<T>(f: () => Promise<T>): Promise<T> { try { return await f(); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('EXT_ERROR', e instanceof Error ? e.message : String(e)); } }
+function preview(p: Awaited<ReturnType<ExtensionStore['inspect']>>) {
+  const m = p.manifest; const c = m.contributes;
+  const contributes = Object.fromEntries(Object.entries({ commands: c.commands.length, themes: c.themes.length, languages: c.languages.length, grammars: c.grammars.length, snippets: c.snippets.length, views: c.views.length, tasks: c.tasks.length }).filter(([, n]) => n > 0));
+  return { token: p.token, id: p.id, displayName: m.displayName, version: m.version, publisher: m.publisher, description: m.description, permissions: m.permissions.map((x) => ({ id: x, description: PERMISSIONS[x as Permission] })), hasCode: !!m.main, sha256: p.sha256, sidecar: p.sidecar, source: p.source, isUpdate: p.isUpdate, fromVersion: p.fromVersion, warnings: p.warnings, files: p.files, contributes };
+}
 /** Effective JDK: workspace override → global setting → newest discovered. Returns null if none satisfies minMajor. */
 async function jdkFor(root: string, minMajor: number, maxMajor = Infinity): Promise<Jdk | null> {
   const ok = (j: Jdk) => j.major >= minMajor && j.major <= maxMajor;
@@ -114,6 +129,9 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   killAllGradle();
   await lsp.setWorkspace(workspace.root);
   await dbg.setWorkspace(workspace.root, (await wsSettings.get(workspace.root)).breakpoints);
+  await exts.stopAll();
+  wsTrusted = await trust.isTrusted(workspace.root);
+  if (wsTrusted) void exts.fire('onStartupFinished');
   return workspace;
 }
 const needWs = () => { if (!workspace) throw new AppError('NO_WORKSPACE', 'No folder is open'); return workspace; };
@@ -166,7 +184,7 @@ const handlers: Handlers = {
   'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
   'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
   'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
-  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); killAllGradle(); await dbg.stop('Workspace trust revoked'); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
+  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); wsTrusted = t; if (t) void exts.fire('onStartupFinished'); if (!t) { await exts.stopAll(); killAllPtys(); killAllGradle(); await dbg.stop('Workspace trust revoked'); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
   'lsp.status.v1': async () => lsp.status(),
   'lsp.logs.v1': async ({ serverId }) => [...lsp.logs(serverId)],
   'lsp.restart.v1': async ({ serverId }) => { await requireTrust(); await lsp.restart(serverId); return null; },
@@ -260,6 +278,30 @@ const handlers: Handlers = {
   },
   'tests.cancel.v1': async ({ runId }) => { const p = testRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
   'recent.list.v1': async () => store.listRecent(),
+  'ext.list.v1': async () => extCall(() => exts.list()),
+  'ext.contributions.v1': async () => extCall(() => exts.contributions()) as never,
+  'ext.outputChannels.v1': async () => exts.outputChannels(),
+  'ext.hostInfo.v1': async () => exts.hostInfo(),
+  'ext.logs.v1': async ({ id }) => exts.logs(id),
+  'ext.pickInstall.v1': async ({ kind }) => {
+    const r = await dialog.showOpenDialog(win!, kind === 'folder'
+      ? { title: 'Install Extension from Folder', properties: ['openDirectory'] }
+      : { title: 'Install Extension from .novaext', properties: ['openFile'], filters: [{ name: 'NOVA extension', extensions: ['novaext'] }] });
+    const p = r.filePaths[0]; if (r.canceled || !p) return null;
+    return extCall(async () => preview(await extStore.inspect(p)));
+  },
+  'ext.install.v1': async ({ token }) => extCall(async () => { const x = await exts.install(token); return { id: x.id, version: x.manifest.version }; }),
+  'ext.cancelInstall.v1': async ({ token }) => { extStore.cancel(token); return null; },
+  'ext.setEnabled.v1': async ({ id, enabled }) => extCall(async () => { await exts.setEnabled(id, enabled); return null; }),
+  'ext.uninstall.v1': async ({ id }) => extCall(async () => { await exts.uninstall(id); return null; }),
+  'ext.rollback.v1': async ({ id }) => extCall(async () => ({ version: (await exts.rollback(id)).manifest.version })),
+  'ext.setGrant.v1': async ({ id, permission, grant }) => extCall(async () => { await exts.setGrant(id, permission, grant); return null; }),
+  'ext.setConfig.v1': async ({ id, key, value }) => extCall(async () => { await exts.setConfig(id, key, value); return null; }),
+  'ext.executeCommand.v1': async ({ command, args }) => extCall(() => exts.executeCommand(command, args ?? [])),
+  'ext.fireEvent.v1': async ({ event }) => { void exts.fire(event); return null; },
+  'ext.treeChildren.v1': async ({ viewId, element }) => extCall(() => exts.treeChildren(viewId, element)) as never,
+  'ext.permissionAnswer.v1': async ({ requestId, grant, remember }) => { permWaiters.get(requestId)?.({ grant, remember }); permWaiters.delete(requestId); return null; },
+  'ext.restartHost.v1': async () => extCall(async () => { await exts.restartHost(); return null; }),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
 };
@@ -348,6 +390,21 @@ app.whenReady().then(async () => {
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
     }) },
   });
+  extStore = new ExtensionStore(extDir(), app.getVersion());
+  await extStore.load();
+  exts = new ExtensionService({
+    store: extStore, hostScript: path.join(__dirname, 'extension-host.cjs').replace('app.asar', 'app.asar.unpacked'),
+    workspace: () => (workspace ? { root: workspace.root, trusted: wsTrusted } : null),
+    emit: (n, p) => emit(n as EventName, p as never),
+    askPermission: (extId, extName, permission) => new Promise((resolve) => {
+      const requestId = ++permSeq;
+      const timer = setTimeout(() => { permWaiters.delete(requestId); resolve({ grant: 'denied', remember: false }); }, 120_000);
+      permWaiters.set(requestId, (a) => { clearTimeout(timer); resolve(a); });
+      emit('ext.permissionRequest.v1', { requestId, extId, extName, permission, description: PERMISSIONS[permission] });
+    }),
+    fetch: (url, init) => net.fetch(url, init),
+    ...(process.env.NOVA_EXT_COMMAND_TIMEOUT_MS ? { commandTimeoutMs: Number(process.env.NOVA_EXT_COMMAND_TIMEOUT_MS) } : {}),
+  });
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   protocol.handle('nova', async (req) => {
     const { pathname } = new URL(req.url);
@@ -363,4 +420,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+app.on('window-all-closed', () => { void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });

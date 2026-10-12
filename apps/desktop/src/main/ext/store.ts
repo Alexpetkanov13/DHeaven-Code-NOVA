@@ -74,6 +74,8 @@ export class ExtensionStore {
     return preview;
   }
 
+  previewId(token: string) { return this.previews.get(token)?.preview.id ?? null; }
+  cancel(token: string) { this.previews.delete(token); }
   async commit(token: string): Promise<InstalledExtension> {
     const p = this.previews.get(token); if (!p) throw new Error('Install request expired; choose the file again');
     this.previews.delete(token);
@@ -108,6 +110,7 @@ export class ExtensionStore {
     if (!v.ok) throw new Error(`Previous version is not usable: ${v.errors.join('; ')}`);
     const cur = e.version; e.version = e.previous; e.previous = cur; e.quarantined = null;
     await this.save();
+    return { id, dir: prevDir, manifest: v.manifest, entry: e } as InstalledExtension;
   }
   /** Keep only the current and previous version directories. */
   private async gc(id: string) {

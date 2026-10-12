@@ -22,11 +22,14 @@ import type { GradleProblem } from '@nova/ipc-contract';
 import { JdkPanel } from './components/JdkPanel';
 import { ProblemsPanel, type ProblemItem } from './components/ProblemsPanel';
 import logo from './logo.svg';
+import { ExtensionsClient, DEFAULT_THEME } from './lib/extensions';
+import { ExtensionsView, ExtensionTreeViews, PermissionPrompt } from './components/ExtensionsView';
+import type { Events } from '@nova/ipc-contract';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests';
+type View = 'explorer' | 'search' | 'scm' | 'lsp' | 'gradle' | 'debug' | 'tests' | 'extensions';
 type Dialog =
   | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
   | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
@@ -57,6 +60,10 @@ export function App() {
   const [scmKey, setScmKey] = useState(0);
   const [log, setLog] = useState<{ t: string; err?: boolean }[]>([{ t: 'DHeaven Code: NOVA started.' }]);
   const [cursor, setCursor] = useState({ ln: 1, col: 1 });
+  const [outChannel, setOutChannel] = useState('');
+  const [permReqs, setPermReqs] = useState<Events['ext.permissionRequest.v1'][]>([]);
+  const [toasts, setToasts] = useState<{ id: number; text: string; level: string }[]>([]);
+  const [, extBump] = useState(0);
   const [, bump] = useState(0);
   const hostRef = useRef<HTMLDivElement>(null);
   const diffHostRef = useRef<HTMLDivElement>(null);
@@ -82,6 +89,27 @@ export function App() {
   const out = useCallback((t: string, err = false) => setLog((l) => [...l.slice(-500), { t: `[${new Date().toLocaleTimeString()}] ${t}`, err }]), []);
   const fail = useCallback((e: unknown) => out(e instanceof IpcError ? `${e.code}: ${e.message}` : String(e), true), [out]);
 
+  const extHooks = useRef({ out, fail, setOutChannel, setShowPanel, setPanelTab });
+  extHooks.current = { out, fail, setOutChannel, setShowPanel, setPanelTab };
+  const [extClient] = useState(() => new ExtensionsClient({
+    onOutput: (e) => { if (e.show) { extHooks.current.setOutChannel(e.key); extHooks.current.setShowPanel(true); extHooks.current.setPanelTab('output'); } },
+    onMessage: (e) => {
+      extHooks.current.out(`[${e.extName}] ${e.message}`, e.level === 'error');
+      const id = Date.now() + Math.random();
+      setToasts((t) => [...t.slice(-3), { id, text: `${e.extName}: ${e.message}`, level: e.level }]);
+      setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
+    },
+    onPermission: (e) => setPermReqs((q) => [...q, e]),
+    onTree: (viewId) => window.dispatchEvent(new CustomEvent('nova-ext-tree', { detail: viewId })),
+    onError: (e) => extHooks.current.fail(e),
+  }));
+  useEffect(() => { const off = extClient.subscribe(() => extBump((n) => n + 1)); void extClient.refresh(); return () => { off(); extClient.dispose(); }; }, [extClient]);
+  const themeApplied = useRef(false);
+  useEffect(() => {
+    if (!settings || themeApplied.current) return;
+    if (settings.colorTheme === DEFAULT_THEME) { themeApplied.current = true; return; }
+    if (extClient.contributions.themes.some((t) => t.id === settings.colorTheme)) { themeApplied.current = true; extClient.applyTheme(settings.colorTheme); }
+  });
   useEffect(() => {
     void call('settings.get.v1', {}).then(setSettings).catch(fail);
     void call('recent.list.v1', {}).then(setRecent).catch(fail);
@@ -114,8 +142,9 @@ export function App() {
     setRecent(await call('recent.list.v1', {}));
     const t = (await call('trust.get.v1', {})).trusted;
     setTrusted(t);
+    void extClient.refresh();
     if (!t) askTrust(info);
-  }, [loadDir, out, askTrust]);
+  }, [loadDir, out, askTrust, extClient]);
 
   const openFolder = useCallback(() => call('workspace.openDialog.v1', {}).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
   const openRecent = useCallback((root: string) => call('workspace.open.v1', { root }).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
@@ -385,6 +414,19 @@ export function App() {
   };
   const showView = (v: View) => { if (view === v && showSidebar) setShowSidebar(false); else { setView(v); setShowSidebar(true); } };
 
+  const runExt = useCallback((command: string, args?: unknown[]) => {
+    void call('ext.executeCommand.v1', args ? { command, args } : { command }).catch(fail);
+  }, [fail]);
+  // Editor context-menu contributions (re-registered whenever contributions change).
+  const editorReady = !!editorRef.current;
+  useEffect(() => {
+    const ed = editorRef.current; if (!ed) return;
+    const ds = extClient.contributions.editorContext.map((m, i) => {
+      const lang = /^editorLangId == ([A-Za-z0-9_.-]+)$/.exec(m.when ?? '')?.[1];
+      return ed.addAction({ id: `ext.${i}.${m.command}`, label: `${m.title} (${m.extName})`, contextMenuGroupId: '9_extensions', ...(lang ? { precondition: `editorLangId == '${lang}'` } : {}), run: () => runExt(m.command) });
+    });
+    return () => { for (const d of ds) d.dispose(); };
+  }, [extClient.contributions, runExt, editorReady]);
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
     { id: 'file.save', title: 'File: Save', keybinding: 'Ctrl+S', run: () => void save() },
@@ -404,7 +446,13 @@ export function App() {
     { id: 'editor.fontUp', title: 'Editor: Increase Font Size', run: () => settings && updateSettings({ editorFontSize: Math.min(40, settings.editorFontSize + 1) }) },
     { id: 'editor.fontDown', title: 'Editor: Decrease Font Size', run: () => settings && updateSettings({ editorFontSize: Math.max(8, settings.editorFontSize - 1) }) },
     ...recent.map((r) => ({ id: `recent:${r.root}`, title: `Open Recent: ${r.name}  —  ${r.root}`, run: () => void openRecent(r.root) })),
-  ], [openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
+    { id: 'workbench.extensions', title: 'View: Extensions', keybinding: 'Ctrl+Shift+X', run: () => { setView('extensions'); setShowSidebar(true); } },
+    { id: 'theme:default', title: 'Preferences: Color Theme: NOVA Dark (built-in)', run: () => { extClient.applyTheme(DEFAULT_THEME); updateSettings({ colorTheme: DEFAULT_THEME }); } },
+    ...extClient.contributions.themes.map((t) => ({ id: `theme:${t.id}`, title: `Preferences: Color Theme: ${t.label} (${t.extName})`, run: () => { if (extClient.applyTheme(t.id)) updateSettings({ colorTheme: t.id }); } })),
+    ...extClient.contributions.commands.filter((c) => c.palette).map((c) => ({ id: `ext:${c.command}`, title: `${c.category ?? c.extName}: ${c.title}`, run: () => runExt(c.command) })),
+    ...extClient.contributions.tasks.map((t) => ({ id: `task:${t.extId}:${t.id}`, title: `Tasks: Run ${t.label} (${t.extName})`, run: () => runExt(t.command) })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- contributions is a mutable field; listing it re-memoizes on refresh
+  ], [extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
 
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
@@ -415,7 +463,7 @@ export function App() {
     const kd = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const map: Record<string, string> = { ',': 'workbench.settings', '`': 'terminal.focus' };
-      const k = e.shiftKey ? ({ F: 'workbench.search', G: 'workbench.scm' } as Record<string, string>)[e.key.toUpperCase()] : map[e.key];
+      const k = e.shiftKey ? ({ F: 'workbench.search', G: 'workbench.scm', X: 'workbench.extensions' } as Record<string, string>)[e.key.toUpperCase()] : map[e.key];
       if (k) { e.preventDefault(); commandsRef.current.find((c) => c.id === k)?.run(); }
     };
     window.addEventListener('keydown', kd);
@@ -440,6 +488,7 @@ export function App() {
           <button className={view === 'gradle' && showSidebar ? 'on' : ''} title="Gradle" aria-label="Gradle" onClick={() => showView('gradle')}>▲</button>
           <button className={view === 'debug' && showSidebar ? 'on' : ''} title="Run and Debug" aria-label="Run and Debug" onClick={() => showView('debug')}>▷</button>
           <button className={view === 'tests' && showSidebar ? 'on' : ''} title="Testing" aria-label="Testing" onClick={() => showView('tests')}>⚗</button>
+          <button className={view === 'extensions' && showSidebar ? 'on' : ''} title="Extensions (Ctrl+Shift+X)" aria-label="Extensions" onClick={() => showView('extensions')}>⧉</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -447,7 +496,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : view === 'gradle' ? 'Gradle' : view === 'debug' ? 'Run and Debug' : view === 'tests' ? 'Testing' : view === 'extensions' ? 'Extensions' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -457,10 +506,19 @@ export function App() {
                 )}
               </div>
               {ws && !trusted && <div className="banner">Restricted Mode <button className="btn small" onClick={() => askTrust(ws)}>Trust…</button></div>}
-              {!ws ? (
+              {view === 'extensions' ? (
+                <ExtensionsView client={extClient} trusted={trusted} onError={fail} onLog={out} confirmInstall={(p, go, cancel) => setDialog({
+                  kind: 'confirm', confirmLabel: p.isUpdate ? `Update to ${p.version}` : 'Install',
+                  message: `${p.isUpdate ? `Update ${p.displayName} from ${p.fromVersion} to ${p.version}` : `Install ${p.displayName} ${p.version}`} by ${p.publisher}? ${p.hasCode ? 'It contains code that runs in the isolated extension host (trusted workspaces only).' : 'It is declarative only (no code).'}`,
+                  list: [`Source: ${p.source}`, `SHA-256: ${p.sha256}`, `Checksum file: ${p.sidecar === 'match' ? 'matches' : 'none provided'}`, `${p.files} files`,
+                    ...(p.permissions.length ? p.permissions.map((x) => `Requests permission ${x.id}: ${x.description} (you will be asked before first use)`) : ['Requests no permissions']),
+                    ...Object.entries(p.contributes).map(([k, n]) => `Contributes ${n} ${k}`), ...p.warnings.map((w) => `Warning: ${w}`)],
+                  confirm: () => { setDialog(null); go(); }, cancel,
+                })} />
+              ) : !ws ? (
                 <div style={{ padding: 12 }}><button className="btn" onClick={openFolder}>Open Folder</button></div>
               ) : view === 'explorer' ? (
-                <Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} />
+                <><Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} /><ExtensionTreeViews client={extClient} onError={fail} /></>
               ) : view === 'search' ? (
                 <SearchView onOpen={(r, l, c) => void openFile(r, l, c)} onError={fail} onLog={out} />
               ) : view === 'debug' ? (
@@ -536,7 +594,15 @@ export function App() {
                 ) : panelTab === 'debug' ? (
                   <DebugConsole store={debugStore} />
                 ) : panelTab === 'output' ? (
-                  <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>
+                  <div className="panel-output">
+                    <select className="out-select" aria-label="Output channel" value={extClient.channels.has(outChannel) ? outChannel : ''} onChange={(e) => setOutChannel(e.target.value)}>
+                      <option value="">NOVA</option>
+                      {[...extClient.channels.values()].map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}
+                    </select>
+                    {extClient.channels.has(outChannel)
+                      ? <pre className="panel-body" role="log" aria-label={`Output: ${extClient.channels.get(outChannel)!.name}`}>{extClient.channels.get(outChannel)!.text}</pre>
+                      : <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>}
+                  </div>
                 ) : ws ? (
                   <TerminalPanel trusted={trusted} workspaceKey={ws.root} onError={fail} onTrust={() => askTrust(ws)} />
                 ) : <div className="trust-note muted">Open a folder to use the terminal.</div>}
@@ -551,12 +617,17 @@ export function App() {
         {ws && <span>{trusted ? 'Trusted' : 'Restricted'}</span>}
         <span title="Native daemon">novad: {daemon}</span>
         <span className="grow" />
+        {extClient.status.filter((s) => s.visible).map((s) => s.command
+          ? <button key={s.key} className="status-item" data-ext-status={s.key} title={s.tooltip} onClick={() => runExt(s.command!)}>{s.text}</button>
+          : <span key={s.key} data-ext-status={s.key} title={s.tooltip}>{s.text}</span>)}
         {activeTab && !showDiff && <span>Ln {cursor.ln}, Col {cursor.col}</span>}
         {activeTab && !showDiff && <span>{activeTab.model.getLanguageId()}</span>}
         {activeTab && !showDiff && <span>{isDirty(activeTab) ? 'Unsaved' : 'Saved'}</span>}
         <span>{settings.mode === 'focus' ? 'Focus' : 'NOVA'} mode</span>
       </footer>
       {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); editorRef.current?.focus(); }} />}
+      {permReqs[0] && <PermissionPrompt key={permReqs[0].requestId} req={permReqs[0]} onAnswer={(grant, remember) => { const r = permReqs[0]!; setPermReqs((q) => q.slice(1)); void call('ext.permissionAnswer.v1', { requestId: r.requestId, grant, remember }).catch(fail); }} />}
+      {toasts.length > 0 && <div className="toasts" aria-live="polite">{toasts.map((t) => <div key={t.id} className={`toast t-${t.level}`}>{t.text}</div>)}</div>}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}
       {dialog?.kind === 'input' && <InputBox title={dialog.title} initial={dialog.initial ?? ''} onSubmit={dialog.submit} onCancel={() => { dialog.cancel?.(); setDialog(null); }} />}
       {dialog?.kind === 'confirm' && <ConfirmBox message={dialog.message} confirmLabel={dialog.confirmLabel} onConfirm={dialog.confirm} onCancel={() => { dialog.cancel?.(); setDialog(null); }} {...(dialog.extra ? { extra: dialog.extra } : {})}>{dialog.list && <ul className="preview-list" aria-label="Edit preview">{dialog.list.map((l) => <li key={l}>{l}</li>)}</ul>}</ConfirmBox>}

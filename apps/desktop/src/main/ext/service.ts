@@ -22,6 +22,8 @@ const MAX_CHANNEL = 1024 * 1024;
 /** Owns extension activation, the host process, capability-checked API calls and contribution data. */
 export class ExtensionService {
   private host: ExtensionHost | null = null;
+  private starting: Promise<void> | null = null;
+  private activating = new Map<string, Promise<void>>();
   private rt = new Map<string, Runtime>();
   private crashes: number[] = [];
   hostState: HostState = 'stopped';
@@ -98,8 +100,12 @@ export class ExtensionService {
       this.host = h;
     }
     const h = this.host;
-    if (h.state !== 'running') await h.start();
-    this.log(null, 'info', `extension host started (pid ${h.pid}, ${h.readyMs} ms)`);
+    if (!this.starting) {
+      // Concurrent callers (e.g. the post-crash restart timer and a user command) share one start.
+      this.starting = (async () => { await h.start(); this.log(null, 'info', `extension host started (pid ${h.pid}, ${h.readyMs} ms)`); })().finally(() => { this.starting = null; });
+    }
+    await this.starting;
+    if (this.host !== h) throw new Error('Extension host stopped while starting');
     return h;
   }
   private async onCrash(h: ExtensionHost, why: string, culprit: string | null) {
@@ -135,8 +141,15 @@ export class ExtensionService {
     }
   }
   private async activate(x: InstalledExtension, event: string) {
+    const inflight = this.activating.get(x.id);
+    if (inflight) return inflight; // second trigger waits for the same activation instead of racing it
+    const p = this.doActivate(x, event).finally(() => this.activating.delete(x.id));
+    this.activating.set(x.id, p);
+    return p;
+  }
+  private async doActivate(x: InstalledExtension, event: string) {
     const r = this.r(x.id);
-    if (r.status === 'active' || r.status === 'activating') return;
+    if (r.status === 'active') return;
     const ws = this.d.workspace();
     if (!ws?.trusted) throw new Error('Extensions do not run in Restricted Mode. Trust the folder to enable them.');
     r.status = 'activating'; r.lastError = null; this.changed();
@@ -183,6 +196,56 @@ export class ExtensionService {
     if ((r.status === 'active') && this.host) await this.host.request('deactivate', { extId: id }, id, 5000).catch((e) => this.log(id, 'warn', `deactivate: ${e.message}`));
     r.status = 'inactive'; r.commands.clear(); r.views.clear();
     for (const [k, s] of this.status) if (s.extId === id) this.status.delete(k);
+    this.changed();
+  }
+
+  // ---------------- lifecycle (store changes that must also update the running host)
+  async install(token: string) {
+    const prevActive = await this.wasActive(token);
+    if (prevActive) await this.deactivate(prevActive);
+    const x = await this.d.store.commit(token);
+    this.r(x.id).lastError = null; this.r(x.id).status = 'inactive';
+    this.log(x.id, 'info', `installed ${x.manifest.version} from ${x.entry.source}`);
+    await this.fire('onStartupFinished'); this.changed();
+    return x;
+  }
+  private async wasActive(token: string) {
+    const id = this.d.store.previewId(token); if (!id) return null;
+    const r = this.rt.get(id); return r && (r.status === 'active' || r.status === 'activating') ? id : null;
+  }
+  async setEnabled(id: string, enabled: boolean) {
+    if (!enabled) await this.deactivate(id);
+    await this.d.store.update(id, enabled ? { enabled: true, quarantined: null } : { enabled: false });
+    const r = this.r(id); r.lastError = null; if (enabled) r.status = 'inactive';
+    this.log(id, 'info', enabled ? 'enabled by user' : 'disabled by user');
+    if (enabled) await this.fire('onStartupFinished');
+    this.changed();
+  }
+  async uninstall(id: string) {
+    await this.deactivate(id);
+    await this.d.store.uninstall(id);
+    for (const [k, c] of this.channels) if (c.extId === id) this.channels.delete(k);
+    this.rt.delete(id); this.changed();
+  }
+  async rollback(id: string) {
+    await this.deactivate(id);
+    const x = await this.d.store.rollback(id);
+    this.log(id, 'info', `rolled back to ${x.manifest.version}`);
+    await this.fire('onStartupFinished'); this.changed();
+    return x;
+  }
+  async setGrant(id: string, perm: string, grant: GrantState | null) {
+    await this.d.store.setGrant(id, perm, grant);
+    this.sessionGrants.delete(`${id}|${perm}`);
+    this.log(id, 'info', `permission '${perm}' set to ${grant ?? 'ask'} by user`); this.changed();
+  }
+  async setConfig(id: string, key: string, value: unknown) {
+    const x = (await this.d.store.list()).find((e) => e.id === id); if (!x) throw new Error(`Unknown extension ${id}`);
+    const prop = x.manifest.contributes.configuration.properties[key]; if (!prop) throw new Error(`${id} has no setting '${key}'`);
+    if (value !== null && typeof value !== prop.type) throw new Error(`Setting '${key}' must be a ${prop.type}`);
+    const config = { ...x.entry.config }; if (value === null) delete config[key]; else config[key] = value as string | number | boolean;
+    await this.d.store.update(id, { config });
+    if (this.r(id).status === 'active') await this.host?.request('configChanged', { extId: id, config: this.config({ ...x, entry: { ...x.entry, config } }) }, id, 5000).catch(() => {});
     this.changed();
   }
 

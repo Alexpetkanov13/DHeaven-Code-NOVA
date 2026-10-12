@@ -32,10 +32,12 @@ export const Settings = z.object({
   sidebarWidth: z.number().int().min(160).max(800).default(260),
   panelHeight: z.number().int().min(80).max(800).default(180),
   javaHome: z.string().max(4096).nullable().default(null),
+  colorTheme: z.string().max(256).default('nova-dark'),
 });
 export type Settings = z.infer<typeof Settings>;
 export const SettingsPatch = Settings.partial().omit({ version: true });
 
+const ExtId = z.string().max(256).regex(/^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/);
 export const GitFile = z.object({ path: z.string(), index: z.string(), worktree: z.string() });
 export type GitFile = z.infer<typeof GitFile>;
 export const GitStatus = z.object({ isRepo: z.boolean(), branch: z.string().nullable(), files: z.array(GitFile) });
@@ -66,7 +68,39 @@ export interface Events {
   'tests.done.v1': { runId: number; code: number | null; killed: boolean; results: TestCase[]; error: string | null; debugPort: number | null };
   'tests.debugReady.v1': { runId: number; port: number };
   'daemon.status.v1': { state: 'starting' | 'ready' | 'restarting' | 'failed'; message?: string };
+  'ext.changed.v1': Record<string, never>;
+  'ext.host.v1': ExtHostInfo;
+  'ext.output.v1': { key: string; extId: string; extName: string; name: string; text: string; show: boolean };
+  'ext.status.v1': ExtStatusItem[];
+  'ext.message.v1': { extId: string; extName: string; level: string; message: string };
+  'ext.treeChanged.v1': { viewId: string };
+  'ext.permissionRequest.v1': { requestId: number; extId: string; extName: string; permission: string; description: string };
 }
+export interface ExtHostInfo { state: string; pid: number | null; startupMs: number | null; error: string | null; crashes: number; logs: string[] }
+export interface ExtStatusItem { key: string; extId: string; text: string; tooltip?: string; command?: string; visible: boolean }
+export interface ExtInfo {
+  id: string; displayName: string; publisher: string; version: string; description: string; license: string | null;
+  enabled: boolean; status: 'inactive' | 'activating' | 'active' | 'error' | 'quarantined' | 'disabled' | 'blocked'; quarantined: string | null; previousVersion: string | null;
+  sha256: string | null; source: string; installedAt: string; path: string; engines: string; activationEvents: string[]; hasCode: boolean;
+  permissions: { id: string; description: string; grant: 'granted' | 'denied' | null }[];
+  contributes: Record<string, number>; activationMs: number | null; activatedBy: string | null; lastError: string | null;
+  configuration: { key: string; type: string; description?: string; default?: unknown; value: unknown; enum?: unknown[] }[];
+}
+export interface ExtPreview { token: string; id: string; displayName: string; version: string; publisher: string; description: string; permissions: { id: string; description: string }[]; hasCode: boolean; sha256: string; sidecar: 'match' | 'mismatch' | 'none'; source: string; isUpdate: boolean; fromVersion: string | null; warnings: string[]; files: number; contributes: Record<string, number> }
+interface ExtBase { extId: string; extName: string }
+export interface ExtContributions {
+  commands: (ExtBase & { command: string; title: string; category?: string; palette: boolean })[];
+  editorContext: (ExtBase & { command: string; when?: string; title: string })[];
+  themes: (ExtBase & { id: string; label: string; uiTheme: string; data: unknown })[];
+  languages: (ExtBase & { id: string; aliases: string[]; extensions: string[]; configurationData: unknown })[];
+  grammars: (ExtBase & { language: string; format: string; data: unknown })[];
+  snippets: (ExtBase & { language: string; data: unknown })[];
+  views: (ExtBase & { id: string; name: string; registered: boolean })[];
+  tasks: (ExtBase & { id: string; label: string; command: string })[];
+  outputChannels: (ExtBase & { name: string })[];
+  status: ExtStatusItem[];
+}
+export interface ExtTreeItem { id?: string; label: string; description?: string; tooltip?: string; collapsible?: boolean; command?: string; element?: unknown }
 export type EventName = keyof Events;
 export interface GradleProblem { uri: string; line: number; col: number; severity: 'error' | 'warning'; message: string; source: string }
 
@@ -179,6 +213,24 @@ export const channels = {
   'tests.run.v1': def(z.object({ filters: z.array(z.string().max(1000).regex(/^[A-Za-z0-9_$.*]+$/)).max(500), debug: z.boolean().optional() }), z.object({ runId: z.number() })),
   'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
+  'ext.list.v1': def(z.object({}), z.custom<ExtInfo[]>()),
+  'ext.contributions.v1': def(z.object({}), z.custom<ExtContributions>()),
+  'ext.outputChannels.v1': def(z.object({}), z.custom<{ key: string; extId: string; name: string; text: string }[]>()),
+  'ext.hostInfo.v1': def(z.object({}), z.custom<ExtHostInfo>()),
+  'ext.logs.v1': def(z.object({ id: ExtId }), z.array(z.string())),
+  'ext.pickInstall.v1': def(z.object({ kind: z.enum(['file', 'folder']) }), z.custom<ExtPreview | null>()),
+  'ext.install.v1': def(z.object({ token: z.string().max(128) }), z.object({ id: z.string(), version: z.string() })),
+  'ext.cancelInstall.v1': def(z.object({ token: z.string().max(128) }), z.null()),
+  'ext.setEnabled.v1': def(z.object({ id: ExtId, enabled: z.boolean() }), z.null()),
+  'ext.uninstall.v1': def(z.object({ id: ExtId }), z.null()),
+  'ext.rollback.v1': def(z.object({ id: ExtId }), z.object({ version: z.string() })),
+  'ext.setGrant.v1': def(z.object({ id: ExtId, permission: z.string().max(64), grant: z.enum(['granted', 'denied']).nullable() }), z.null()),
+  'ext.setConfig.v1': def(z.object({ id: ExtId, key: z.string().max(128), value: z.union([z.string().max(10000), z.number(), z.boolean(), z.null()]) }), z.null()),
+  'ext.executeCommand.v1': def(z.object({ command: z.string().max(256), args: z.array(z.unknown()).max(16).optional() }), z.unknown()),
+  'ext.fireEvent.v1': def(z.object({ event: z.string().max(256).regex(/^(onLanguage|onView):[A-Za-z0-9_.-]+$/) }), z.null()),
+  'ext.treeChildren.v1': def(z.object({ viewId: z.string().max(128), element: z.unknown().optional() }), z.custom<ExtTreeItem[]>()),
+  'ext.permissionAnswer.v1': def(z.object({ requestId: z.number().int(), grant: z.enum(['granted', 'denied']), remember: z.boolean() }), z.null()),
+  'ext.restartHost.v1': def(z.object({}), z.null()),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),
 } as const;
@@ -188,7 +240,7 @@ export type ChannelName = keyof Channels;
 export type Req<C extends ChannelName> = z.input<Channels[C]['req']>;
 export type Res<C extends ChannelName> = z.output<Channels[C]['res']>;
 
-export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'INTERNAL']);
+export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'INTERNAL']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export type Envelope<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string } };
