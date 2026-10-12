@@ -3,14 +3,73 @@
   "name": "minecraft-dev",
   "publisher": "dheaven",
   "displayName": "Minecraft Developer Pack",
-  "description": "First-party, bundled. Fabric mod and Paper plugin project templates (versions resolved from official Fabric/PaperMC sources at generation time). Contains no Mojang assets.",
+  "description": "First-party, bundled. Fabric mod / Paper plugin project templates (versions resolved from official Fabric/PaperMC sources at generation time), fabric.mod.json / plugin.yml / pack.mcmeta / model JSON schema validation. Contains no Mojang assets.",
   "version": "1.0.0",
   "license": "MIT",
-  "engines": { "nova": "^0.1.0" },
+  "engines": {
+    "nova": "^0.1.0"
+  },
   "contributes": {
     "projectTemplates": [
-      { "id": "fabric-mod", "label": "Minecraft: Fabric mod", "description": "Fabric Loom project (Minecraft 26.1+, unobfuscated, no mappings) with main + client entrypoints and Fabric API.", "path": "templates/fabric-mod", "resolver": "fabric", "wrapper": "templates/_gradle-wrapper" },
-      { "id": "paper-plugin", "label": "Minecraft: Paper plugin", "description": "Paper plugin (plugin.yml) with the run-paper Gradle plugin for a local test server.", "path": "templates/paper-plugin", "resolver": "paper", "wrapper": "templates/_gradle-wrapper" }
+      {
+        "id": "fabric-mod",
+        "label": "Minecraft: Fabric mod",
+        "description": "Fabric Loom project (Minecraft 26.1+, unobfuscated, no mappings) with main + client entrypoints and Fabric API.",
+        "path": "templates/fabric-mod",
+        "resolver": "fabric",
+        "wrapper": "templates/_gradle-wrapper"
+      },
+      {
+        "id": "paper-plugin",
+        "label": "Minecraft: Paper plugin",
+        "description": "Paper plugin (plugin.yml) with the run-paper Gradle plugin for a local test server.",
+        "path": "templates/paper-plugin",
+        "resolver": "paper",
+        "wrapper": "templates/_gradle-wrapper"
+      }
+    ],
+    "languages": [
+      {
+        "id": "json",
+        "extensions": [
+          ".mcmeta"
+        ]
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "fabric.mod.json"
+        ],
+        "schema": "schemas/fabric.mod.json.schema.json"
+      },
+      {
+        "fileMatch": [
+          "pack.mcmeta"
+        ],
+        "schema": "schemas/pack.mcmeta.schema.json"
+      },
+      {
+        "fileMatch": [
+          "assets/*/models/**/*.json"
+        ],
+        "schema": "schemas/model.schema.json"
+      }
+    ],
+    "yamlValidation": [
+      {
+        "fileMatch": [
+          "plugin.yml",
+          "paper-plugin.yml"
+        ],
+        "schema": "schemas/plugin.yml.schema.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "json",
+        "path": "snippets/minecraft-json.json"
+      }
     ]
   }
 }

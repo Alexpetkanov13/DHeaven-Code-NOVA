@@ -111,6 +111,9 @@ export interface ExtContributions {
   views: (ExtBase & { id: string; name: string; registered: boolean })[];
   tasks: (ExtBase & { id: string; label: string; command: string })[];
   outputChannels: (ExtBase & { name: string })[];
+  jsonValidation: (ExtBase & { fileMatch: string[]; schemaPath: string; schema: unknown })[];
+  yamlValidation: (ExtBase & { fileMatch: string[]; schemaPath: string; schema: unknown })[];
+  gradleRunTasks: (ExtBase & { view: string; plugin: string; label: string; tasks: { name: string; label: string; requiresEula: boolean; runDir: string }[] })[];
   status: ExtStatusItem[];
 }
 export interface TemplateInfo { key: string; extId: string; extName: string; id: string; label: string; description: string; resolver: string }

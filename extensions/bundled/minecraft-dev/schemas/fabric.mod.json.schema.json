@@ -1,0 +1,455 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "Fabric mod metadata (fabric.mod.json, schemaVersion 1)",
+ "description": "Written by DHeaven Code: NOVA from the Fabric Loader metadata specification (https://wiki.fabricmc.net/documentation:fabric_mod_json_spec).",
+ "type": "object",
+ "required": [
+  "schemaVersion",
+  "id",
+  "version"
+ ],
+ "properties": {
+  "schemaVersion": {
+   "const": 1,
+   "description": "Must be 1 for current Fabric Loader."
+  },
+  "id": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9_-]{1,63}$",
+   "description": "Mod id: 2-64 chars, lowercase letter first, then a-z 0-9 _ -."
+  },
+  "version": {
+   "type": "string",
+   "minLength": 1,
+   "description": "Mod version (SemVer recommended). ${version} is expanded by processResources."
+  },
+  "provides": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "environment": {
+   "enum": [
+    "*",
+    "client",
+    "server"
+   ],
+   "description": "Where the mod runs."
+  },
+  "entrypoints": {
+   "type": "object",
+   "properties": {
+    "main": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "type": "string",
+        "description": "Fully-qualified class, method (Class::method) or field reference"
+       },
+       {
+        "type": "object",
+        "required": [
+         "value"
+        ],
+        "properties": {
+         "adapter": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      ]
+     }
+    },
+    "client": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "type": "string",
+        "description": "Fully-qualified class, method (Class::method) or field reference"
+       },
+       {
+        "type": "object",
+        "required": [
+         "value"
+        ],
+        "properties": {
+         "adapter": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      ]
+     }
+    },
+    "server": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "type": "string",
+        "description": "Fully-qualified class, method (Class::method) or field reference"
+       },
+       {
+        "type": "object",
+        "required": [
+         "value"
+        ],
+        "properties": {
+         "adapter": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      ]
+     }
+    },
+    "preLaunch": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "type": "string",
+        "description": "Fully-qualified class, method (Class::method) or field reference"
+       },
+       {
+        "type": "object",
+        "required": [
+         "value"
+        ],
+        "properties": {
+         "adapter": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      ]
+     }
+    },
+    "fabric-datagen": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "type": "string",
+        "description": "Fully-qualified class, method (Class::method) or field reference"
+       },
+       {
+        "type": "object",
+        "required": [
+         "value"
+        ],
+        "properties": {
+         "adapter": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      ]
+     }
+    }
+   },
+   "additionalProperties": {
+    "type": "array",
+    "items": {
+     "oneOf": [
+      {
+       "type": "string",
+       "description": "Fully-qualified class, method (Class::method) or field reference"
+      },
+      {
+       "type": "object",
+       "required": [
+        "value"
+       ],
+       "properties": {
+        "adapter": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       },
+       "additionalProperties": false
+      }
+     ]
+    }
+   }
+  },
+  "jars": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "file"
+    ],
+    "properties": {
+     "file": {
+      "type": "string"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  "languageAdapters": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   }
+  },
+  "mixins": {
+   "type": "array",
+   "items": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "object",
+      "required": [
+       "config"
+      ],
+      "properties": {
+       "config": {
+        "type": "string"
+       },
+       "environment": {
+        "enum": [
+         "*",
+         "client",
+         "server"
+        ]
+       }
+      },
+      "additionalProperties": false
+     }
+    ]
+   }
+  },
+  "accessWidener": {
+   "type": "string"
+  },
+  "depends": {
+   "type": "object",
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "description": "Map of mod id \u2192 version range (or list of ranges)."
+  },
+  "recommends": {
+   "type": "object",
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "description": "Map of mod id \u2192 version range (or list of ranges)."
+  },
+  "suggests": {
+   "type": "object",
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "description": "Map of mod id \u2192 version range (or list of ranges)."
+  },
+  "conflicts": {
+   "type": "object",
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "description": "Map of mod id \u2192 version range (or list of ranges)."
+  },
+  "breaks": {
+   "type": "object",
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "description": "Map of mod id \u2192 version range (or list of ranges)."
+  },
+  "name": {
+   "type": "string"
+  },
+  "description": {
+   "type": "string"
+  },
+  "authors": {
+   "type": "array",
+   "items": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "object",
+      "required": [
+       "name"
+      ],
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "contact": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "string"
+        }
+       }
+      },
+      "additionalProperties": false
+     }
+    ]
+   }
+  },
+  "contributors": {
+   "type": "array",
+   "items": {
+    "oneOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "object",
+      "required": [
+       "name"
+      ],
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "contact": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "string"
+        }
+       }
+      },
+      "additionalProperties": false
+     }
+    ]
+   }
+  },
+  "contact": {
+   "type": "object",
+   "properties": {
+    "email": {
+     "type": "string"
+    },
+    "irc": {
+     "type": "string"
+    },
+    "homepage": {
+     "type": "string"
+    },
+    "issues": {
+     "type": "string"
+    },
+    "sources": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": {
+    "type": "string"
+   }
+  },
+  "license": {
+   "oneOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   ]
+  },
+  "icon": {
+   "oneOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   ]
+  },
+  "custom": {
+   "type": "object"
+  }
+ },
+ "additionalProperties": false
+}

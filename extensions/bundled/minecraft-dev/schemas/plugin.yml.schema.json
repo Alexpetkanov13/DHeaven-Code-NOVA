@@ -1,0 +1,190 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "Bukkit/Paper plugin.yml",
+ "description": "Written by DHeaven Code: NOVA from the Bukkit plugin.yml documentation and Paper docs.",
+ "type": "object",
+ "required": [
+  "name",
+  "version",
+  "main"
+ ],
+ "properties": {
+  "name": {
+   "type": "string",
+   "pattern": "^[A-Za-z0-9 _.-]+$",
+   "description": "Plugin name: A-Z a-z 0-9 space _ . -"
+  },
+  "version": {
+   "type": [
+    "string",
+    "number"
+   ]
+  },
+  "main": {
+   "type": "string",
+   "pattern": "^(?!org\\.bukkit\\.)([A-Za-z_$][A-Za-z0-9_$]*\\.)+[A-Za-z_$][A-Za-z0-9_$]*$",
+   "description": "Fully-qualified class extending JavaPlugin (not in org.bukkit.*)."
+  },
+  "api-version": {
+   "type": [
+    "string",
+    "number"
+   ],
+   "description": "Minecraft API version, e.g. '1.21' or '26.3'. Quote it."
+  },
+  "description": {
+   "type": "string"
+  },
+  "author": {
+   "type": "string"
+  },
+  "authors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "contributors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "website": {
+   "type": "string"
+  },
+  "prefix": {
+   "type": "string"
+  },
+  "load": {
+   "enum": [
+    "STARTUP",
+    "POSTWORLD"
+   ]
+  },
+  "depend": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "softdepend": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "loadbefore": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "provides": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "libraries": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "pattern": "^[^:\\s]+:[^:\\s]+:[^:\\s]+$"
+   },
+   "description": "Maven coordinates group:artifact:version"
+  },
+  "folia-supported": {
+   "type": "boolean"
+  },
+  "default-permission": {
+   "enum": [
+    "true",
+    "false",
+    "op",
+    "not op",
+    true,
+    false
+   ]
+  },
+  "commands": {
+   "type": "object",
+   "additionalProperties": {
+    "type": [
+     "object",
+     "null"
+    ],
+    "properties": {
+     "description": {
+      "type": "string"
+     },
+     "usage": {
+      "type": "string"
+     },
+     "aliases": {
+      "oneOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      ]
+     },
+     "permission": {
+      "type": "string"
+     },
+     "permission-message": {
+      "type": "string"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  "permissions": {
+   "type": "object",
+   "additionalProperties": {
+    "type": [
+     "object",
+     "null"
+    ],
+    "properties": {
+     "description": {
+      "type": "string"
+     },
+     "default": {
+      "enum": [
+       "true",
+       "false",
+       "op",
+       "not op",
+       true,
+       false
+      ]
+     },
+     "children": {
+      "oneOf": [
+       {
+        "type": "object",
+        "additionalProperties": {
+         "type": "boolean"
+        }
+       },
+       {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      ]
+     }
+    },
+    "additionalProperties": false
+   }
+  }
+ },
+ "additionalProperties": false
+}

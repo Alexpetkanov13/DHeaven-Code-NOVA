@@ -67,7 +67,7 @@ export class ExtensionService {
 
   /** Declarative contributions of enabled extensions (no code runs for these; safe in Restricted Mode). */
   async contributions() {
-    const out = { commands: [] as unknown[], editorContext: [] as unknown[], themes: [] as unknown[], languages: [] as unknown[], grammars: [] as unknown[], snippets: [] as unknown[], views: [] as unknown[], tasks: [] as unknown[], outputChannels: [] as unknown[], status: [...this.status.entries()].filter(([, s]) => s.visible).map(([key, s]) => ({ key, ...s })) };
+    const out = { commands: [] as unknown[], editorContext: [] as unknown[], themes: [] as unknown[], languages: [] as unknown[], grammars: [] as unknown[], snippets: [] as unknown[], views: [] as unknown[], tasks: [] as unknown[], outputChannels: [] as unknown[], jsonValidation: [] as unknown[], yamlValidation: [] as unknown[], gradleRunTasks: [] as unknown[], status: [...this.status.entries()].filter(([, s]) => s.visible).map(([key, s]) => ({ key, ...s })) };
     for (const x of await this.d.store.list()) {
       if (!x.entry.enabled) continue;
       const c = x.manifest.contributes; const ext = { extId: x.id, extName: x.manifest.displayName };
@@ -81,6 +81,9 @@ export class ExtensionService {
       for (const v of c.views) out.views.push({ ...ext, ...v, registered: this.r(x.id).views.has(v.id) });
       for (const t of c.tasks) out.tasks.push({ ...ext, ...t });
       for (const ch of c.outputChannels) out.outputChannels.push({ ...ext, name: ch });
+      for (const v of c.jsonValidation) out.jsonValidation.push({ ...ext, fileMatch: v.fileMatch, schemaPath: v.schema, schema: await readJson(x.dir, v.schema) });
+      for (const v of c.yamlValidation) out.yamlValidation.push({ ...ext, fileMatch: v.fileMatch, schemaPath: v.schema, schema: await readJson(x.dir, v.schema) });
+      for (const g of c.gradleRunTasks) out.gradleRunTasks.push({ ...ext, ...g });
     }
     return out;
   }
@@ -321,5 +324,5 @@ async function readJson(dir: string, rel: string): Promise<unknown> {
 }
 function summarize(m: Manifest) {
   const c = m.contributes;
-  return Object.fromEntries(Object.entries({ commands: c.commands.length, themes: c.themes.length, languages: c.languages.length, grammars: c.grammars.length, snippets: c.snippets.length, views: c.views.length, tasks: c.tasks.length, outputChannels: c.outputChannels.length, settings: Object.keys(c.configuration.properties).length, menus: c.menus['editor/context'].length }).filter(([, n]) => n > 0));
+  return Object.fromEntries(Object.entries({ commands: c.commands.length, themes: c.themes.length, languages: c.languages.length, grammars: c.grammars.length, snippets: c.snippets.length, views: c.views.length, tasks: c.tasks.length, outputChannels: c.outputChannels.length, projectTemplates: c.projectTemplates.length, schemas: c.jsonValidation.length + c.yamlValidation.length, runTasks: c.gradleRunTasks.length, settings: Object.keys(c.configuration.properties).length, menus: c.menus['editor/context'].length }).filter(([, n]) => n > 0));
 }

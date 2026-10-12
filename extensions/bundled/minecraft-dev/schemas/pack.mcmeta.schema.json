@@ -1,0 +1,205 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "Resource/data pack pack.mcmeta",
+ "description": "Written by DHeaven Code: NOVA. Since 1.21.9 packs may use min_format/max_format instead of pack_format.",
+ "type": "object",
+ "required": [
+  "pack"
+ ],
+ "properties": {
+  "pack": {
+   "type": "object",
+   "required": [
+    "description"
+   ],
+   "properties": {
+    "pack_format": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "Pack format number of the target game version."
+    },
+    "min_format": {
+     "oneOf": [
+      {
+       "type": "integer",
+       "minimum": 1
+      },
+      {
+       "type": "array",
+       "items": {
+        "type": "integer"
+       },
+       "minItems": 1,
+       "maxItems": 2
+      }
+     ]
+    },
+    "max_format": {
+     "oneOf": [
+      {
+       "type": "integer",
+       "minimum": 1
+      },
+      {
+       "type": "array",
+       "items": {
+        "type": "integer"
+       },
+       "minItems": 1,
+       "maxItems": 2
+      }
+     ]
+    },
+    "supported_formats": {
+     "oneOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "array",
+       "items": {
+        "type": "integer"
+       },
+       "minItems": 2,
+       "maxItems": 2
+      },
+      {
+       "type": "object",
+       "properties": {
+        "min_inclusive": {
+         "type": "integer"
+        },
+        "max_inclusive": {
+         "type": "integer"
+        }
+       },
+       "additionalProperties": false
+      }
+     ]
+    },
+    "description": {
+     "oneOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "object"
+      },
+      {
+       "type": "array"
+      }
+     ]
+    }
+   },
+   "additionalProperties": false
+  },
+  "filter": {
+   "type": "object",
+   "properties": {
+    "block": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "namespace": {
+        "type": "string"
+       },
+       "path": {
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    }
+   },
+   "additionalProperties": false
+  },
+  "overlays": {
+   "type": "object",
+   "properties": {
+    "entries": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "directory"
+      ],
+      "properties": {
+       "directory": {
+        "type": "string",
+        "pattern": "^[a-z0-9_-]+$"
+       },
+       "formats": {},
+       "min_format": {
+        "oneOf": [
+         {
+          "type": "integer",
+          "minimum": 1
+         },
+         {
+          "type": "array",
+          "items": {
+           "type": "integer"
+          },
+          "minItems": 1,
+          "maxItems": 2
+         }
+        ]
+       },
+       "max_format": {
+        "oneOf": [
+         {
+          "type": "integer",
+          "minimum": 1
+         },
+         {
+          "type": "array",
+          "items": {
+           "type": "integer"
+          },
+          "minItems": 1,
+          "maxItems": 2
+         }
+        ]
+       }
+      },
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "language": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "required": [
+     "name",
+     "region"
+    ],
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "region": {
+      "type": "string"
+     },
+     "bidirectional": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  "features": {
+   "type": "object",
+   "properties": {
+    "enabled": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "additionalProperties": false
+}

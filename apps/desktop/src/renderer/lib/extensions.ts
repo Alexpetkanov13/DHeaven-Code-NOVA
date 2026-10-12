@@ -2,6 +2,7 @@ import type { ExtContributions, ExtHostInfo, ExtInfo, ExtStatusItem, Events } fr
 import { call, on } from './ipc';
 import { monaco } from './monaco';
 import { sanitizeTheme, THEMABLE_VARS } from './themeSanitize';
+import { YamlSchemaValidator } from './yamlSchema';
 export { sanitizeTheme, THEMABLE_VARS };
 
 export const DEFAULT_THEME = 'nova-dark';
@@ -12,7 +13,7 @@ type Snip = { prefix: string | string[]; body: string | string[]; description?: 
 /** Renderer-side state for extensions: lists, contributions, host status, output channels, status items. */
 export class ExtensionsClient {
   list: ExtInfo[] = [];
-  contributions: ExtContributions = { commands: [], editorContext: [], themes: [], languages: [], grammars: [], snippets: [], views: [], tasks: [], outputChannels: [], status: [] };
+  contributions: ExtContributions = { commands: [], editorContext: [], themes: [], languages: [], grammars: [], snippets: [], views: [], tasks: [], outputChannels: [], jsonValidation: [], yamlValidation: [], gradleRunTasks: [], status: [] };
   host: ExtHostInfo | null = null;
   status: ExtStatusItem[] = [];
   channels = new Map<string, { key: string; extId: string; name: string; text: string }>();
@@ -23,6 +24,8 @@ export class ExtensionsClient {
   private langDisposables: monaco.IDisposable[] = [];
   private registeredLangs = new Set<string>();
   private firedLangs = new Set<string>();
+  private extraExts = new Set<string>();
+  private yaml: YamlSchemaValidator | null = null;
   constructor(private hooks: { onOutput(e: Events['ext.output.v1']): void; onMessage(e: Events['ext.message.v1']): void; onPermission(e: Events['ext.permissionRequest.v1']): void; onTree(viewId: string): void; onError(e: unknown): void }) {
     this.offs.push(
       on('ext.changed.v1', () => void this.refresh()),
@@ -35,7 +38,7 @@ export class ExtensionsClient {
     );
     monaco.editor.onDidCreateModel((m) => this.languageOpened(m.getLanguageId()));
   }
-  dispose() { for (const o of this.offs) o(); for (const d of this.langDisposables) d.dispose(); }
+  dispose() { for (const o of this.offs) o(); for (const d of this.langDisposables) d.dispose(); this.yaml?.dispose(); }
   subscribe(f: () => void) { this.subs.add(f); return () => { this.subs.delete(f); }; }
   private notify() { for (const f of this.subs) f(); }
 
@@ -61,6 +64,10 @@ export class ExtensionsClient {
     const c = this.contributions;
     for (const l of c.languages) {
       if (!this.registeredLangs.has(l.id) && !monaco.languages.getLanguages().some((x) => x.id === l.id)) { monaco.languages.register({ id: l.id, aliases: l.aliases, extensions: l.extensions }); this.registeredLangs.add(l.id); }
+      else { // extra file extensions for an existing (e.g. built-in) language; Monaco merges registrations
+        const add = l.extensions.filter((e) => !this.extraExts.has(`${l.id}:${e}`));
+        if (add.length) { monaco.languages.register({ id: l.id, extensions: add }); for (const e of add) this.extraExts.add(`${l.id}:${e}`); }
+      }
       if (l.configurationData && typeof l.configurationData === 'object' && !('__error' in l.configurationData)) {
         try { this.langDisposables.push(monaco.languages.setLanguageConfiguration(l.id, l.configurationData as monaco.languages.LanguageConfiguration)); } catch (e) { this.hooks.onError(`${l.extName}: language configuration rejected: ${e}`); }
       }
@@ -68,6 +75,15 @@ export class ExtensionsClient {
     for (const g of c.grammars) {
       try { this.langDisposables.push(monaco.languages.setMonarchTokensProvider(g.language, g.data as monaco.languages.IMonarchLanguage)); } catch (e) { this.hooks.onError(`${g.extName}: grammar for ${g.language} rejected: ${e}`); }
     }
+    // Schema validation + completion: JSON via Monaco's JSON language service; YAML via a CSP-safe validator.
+    monaco.json.jsonDefaults.setDiagnosticsOptions({
+      validate: true, enableSchemaRequest: false, allowComments: false,
+      schemas: c.jsonValidation.filter((v) => v.schema && typeof v.schema === 'object' && !('__error' in (v.schema as object))).map((v) => ({
+        uri: `https://nova.invalid/schemas/${v.extId}/${v.schemaPath}`, fileMatch: v.fileMatch.map((f) => `**/${f}`), schema: v.schema as object,
+      })),
+    });
+    this.yaml ??= new YamlSchemaValidator((uri) => uri.path);
+    this.yaml.setSources(c.yamlValidation.filter((v) => v.schema && typeof v.schema === 'object').map((v) => ({ fileMatch: v.fileMatch, schema: v.schema, label: `${v.schemaPath.split('/').pop()!.replace('.schema.json', '')} schema (${v.extName})` })));
     const byLang = new Map<string, Snip[]>();
     for (const s of c.snippets) for (const v of Object.values((s.data ?? {}) as Record<string, Snip>)) if (v && v.body && v.prefix) byLang.set(s.language, [...(byLang.get(s.language) ?? []), v]);
     for (const [lang, snips] of byLang) {

@@ -11,7 +11,8 @@ export const RelPath = z.string().min(1).max(512).refine((p) => !p.startsWith('/
 
 /** Core-implemented version resolvers usable by contributed project templates. */
 export const TEMPLATE_RESOLVERS = ['fabric', 'paper', 'none'] as const;
-const FILE_GLOB = /^[A-Za-z0-9*._-]{1,128}$/;
+/** File globs: no "/" → matches the file name; with "/" → matches the workspace-relative path (`*` = one segment part, `**` = any depth). */
+const FILE_GLOB = /^(?!.*(^|\/)\.\.(\/|$))[A-Za-z0-9*._\/-]{1,200}$/;
 
 const ACTIVATION = /^(\*|onStartupFinished|onCommand:[A-Za-z0-9._-]+|onLanguage:[A-Za-z0-9_-]+|onView:[A-Za-z0-9._-]+)$/;
 

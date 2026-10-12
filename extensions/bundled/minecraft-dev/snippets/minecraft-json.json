@@ -1,0 +1,22 @@
+{
+  "pack.mcmeta": {
+    "prefix": "mc-pack-mcmeta",
+    "description": "Resource pack pack.mcmeta (set pack_format / min_format for your target version)",
+    "body": ["{", "\t\"pack\": {", "\t\t\"description\": \"${1:My resource pack}\",", "\t\t\"pack_format\": ${2:1}", "\t}", "}"]
+  },
+  "block model (cube_all)": {
+    "prefix": "mc-block-model",
+    "description": "Block model using minecraft:block/cube_all",
+    "body": ["{", "\t\"parent\": \"minecraft:block/cube_all\",", "\t\"textures\": {", "\t\t\"all\": \"${1:mymod}:block/${2:my_block}\"", "\t}", "}"]
+  },
+  "item model (generated)": {
+    "prefix": "mc-item-model",
+    "description": "Flat item model using minecraft:item/generated",
+    "body": ["{", "\t\"parent\": \"minecraft:item/generated\",", "\t\"textures\": {", "\t\t\"layer0\": \"${1:mymod}:item/${2:my_item}\"", "\t}", "}"]
+  },
+  "model element": {
+    "prefix": "mc-model-element",
+    "description": "A cuboid element with all six faces",
+    "body": ["{", "\t\"from\": [${1:0}, ${2:0}, ${3:0}],", "\t\"to\": [${4:16}, ${5:16}, ${6:16}],", "\t\"faces\": {", "\t\t\"down\": { \"texture\": \"#${7:all}\", \"cullface\": \"down\" },", "\t\t\"up\": { \"texture\": \"#$7\", \"cullface\": \"up\" },", "\t\t\"north\": { \"texture\": \"#$7\", \"cullface\": \"north\" },", "\t\t\"south\": { \"texture\": \"#$7\", \"cullface\": \"south\" },", "\t\t\"west\": { \"texture\": \"#$7\", \"cullface\": \"west\" },", "\t\t\"east\": { \"texture\": \"#$7\", \"cullface\": \"east\" }", "\t}", "}"]
+  }
+}
