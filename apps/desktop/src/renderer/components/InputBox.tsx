@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useState } from 'react';
 
 export function InputBox({ title, initial = '', onSubmit, onCancel }: { title: string; initial?: string; onSubmit(v: string): void; onCancel(): void }) {
@@ -29,11 +30,12 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   );
 }
 
-export function ConfirmBox({ message, confirmLabel, onConfirm, onCancel, extra }: { message: string; confirmLabel: string; onConfirm(): void; onCancel(): void; extra?: { label: string; run(): void } }) {
+export function ConfirmBox({ message, confirmLabel, onConfirm, onCancel, extra, children }: { message: string; confirmLabel: string; onConfirm(): void; onCancel(): void; extra?: { label: string; run(): void }; children?: React.ReactNode }) {
   return (
     <div className="palette-backdrop" onMouseDown={onCancel}>
       <div className="palette confirm" role="alertdialog" aria-label={message} onMouseDown={(e) => e.stopPropagation()}>
         <p>{message}</p>
+        {children}
         <div className="row-btns">
           {extra && <button className="btn" onClick={extra.run}>{extra.label}</button>}
           <button className="btn" onClick={onCancel}>Cancel</button>

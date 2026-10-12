@@ -43,6 +43,8 @@ export type GitStatus = z.infer<typeof GitStatus>;
 export const SearchMatch = z.object({ rel: z.string(), line: z.number(), start: z.number(), end: z.number(), text: z.string() });
 export type SearchMatch = z.infer<typeof SearchMatch>;
 
+export interface LspDiagnostic { range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string; severity?: number; source?: string; code?: string | number }
+
 /** Events pushed main -> renderer. */
 export interface Events {
   'fs.changed.v1': { rels: string[] };
@@ -50,9 +52,22 @@ export interface Events {
   'search.done.v1': { searchId: number; total: number; truncated: boolean; cancelled: boolean };
   'terminal.data.v1': { ptyId: number; data: string };
   'terminal.exit.v1': { ptyId: number; code: number | null };
+  'lsp.status.v1': { servers: ServerStatus[] };
+  'lsp.diagnostics.v1': { serverId: string; uri: string; diagnostics: LspDiagnostic[] };
+  'lsp.install.v1': { serverId: string; message: string; done?: boolean; error?: boolean };
   'daemon.status.v1': { state: 'starting' | 'ready' | 'restarting' | 'failed'; message?: string };
 }
 export type EventName = keyof Events;
+
+export const ServerStatus = z.object({
+  id: z.string(), name: z.string(), version: z.string(), languages: z.array(z.string()), installed: z.boolean(),
+  state: z.enum(['stopped', 'starting', 'ready', 'restarting', 'crashed', 'failed', 'blocked']), reason: z.string().nullable(),
+  pid: z.number().nullable(), capabilities: z.array(z.string()), limitations: z.string(),
+  download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }),
+});
+export type ServerStatus = z.infer<typeof ServerStatus>;
+export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'workspace/executeCommand'] as const;
+const FileUri = z.string().max(8192).startsWith('file://');
 
 const def = <Req extends z.ZodTypeAny, Res extends z.ZodTypeAny>(req: Req, res: Res) => ({ req, res });
 
@@ -96,6 +111,17 @@ export const channels = {
   'git.commit.v1': def(z.object({ message: z.string().min(1).max(100000) }), z.object({ commit: z.string() })),
   'trust.get.v1': def(z.object({}), z.object({ trusted: z.boolean() })),
   'trust.set.v1': def(z.object({ trusted: z.boolean() }), z.object({ trusted: z.boolean() })),
+  'lsp.status.v1': def(z.object({}), z.array(ServerStatus)),
+  'lsp.logs.v1': def(z.object({ serverId: z.string() }), z.array(z.string())),
+  'lsp.restart.v1': def(z.object({ serverId: z.string() }), z.null()),
+  'lsp.stop.v1': def(z.object({ serverId: z.string() }), z.null()),
+  'lsp.install.v1': def(z.object({ serverId: z.string(), consent: z.literal(true) }), z.null()),
+  'lsp.open.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), text: z.string().max(32 * 1024 * 1024) }), z.null()),
+  'lsp.change.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), changes: z.array(z.object({ range: z.unknown().optional(), text: z.string() })).max(10000) }), z.null()),
+  'lsp.save.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri }), z.null()),
+  'lsp.close.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri }), z.null()),
+  'lsp.request.v1': def(z.object({ languageId: z.string().max(64), reqId: z.string().max(64), method: z.enum(LSP_METHODS), params: z.unknown() }), z.unknown()),
+  'lsp.cancel.v1': def(z.object({ reqId: z.string().max(64) }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'settings.get.v1': def(z.object({}), Settings),
   'settings.update.v1': def(SettingsPatch, Settings),
@@ -106,7 +132,7 @@ export type ChannelName = keyof Channels;
 export type Req<C extends ChannelName> = z.input<Channels[C]['req']>;
 export type Res<C extends ChannelName> = z.output<Channels[C]['res']>;
 
-export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'TOO_LARGE', 'INTERNAL']);
+export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'INTERNAL']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export type Envelope<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string } };

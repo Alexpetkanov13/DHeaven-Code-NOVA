@@ -23,3 +23,12 @@ describe('fuzzy', () => {
     expect(fuzzyScore('save', 'File: Save')).toBeGreaterThan(fuzzyScore('save', 'File: Save As…') - 1);
   });
 });
+import { uriToRel, joinAbs } from './paths';
+describe('paths', () => {
+  it('maps fs paths to workspace-relative paths', () => {
+    expect(uriToRel('/w/p/src/A.java', '/w/p')).toBe('src/A.java');
+    expect(uriToRel('/w/p2/x', '/w/p')).toBeNull();
+    expect(uriToRel('c:\\Work\\P\\a.kt', 'C:\\work\\p')).toBe('a.kt');
+    expect(joinAbs('/w/p/', 'a/b')).toBe('/w/p/a/b');
+  });
+});

@@ -9,6 +9,11 @@ import { CoalescingWatcher } from './watcher';
 import { TrustStore } from './trust';
 import { DaemonClient, DaemonError } from './daemon';
 import { applyReplace } from './replace';
+import { LspManager } from './lsp/manager';
+import { LspRequestError } from './lsp/server';
+import { SERVERS } from './lsp/registry';
+import { installServer } from './lsp/installer';
+import { discoverJdks, type Jdk } from './jdk';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 
@@ -37,6 +42,11 @@ let win: BrowserWindow | null = null;
 let watcher: CoalescingWatcher | null = null;
 let trust: TrustStore;
 let daemon: DaemonClient;
+let lsp: LspManager;
+const serversDir = () => (process.env.NOVA_SERVERS_DIR ? path.resolve(process.env.NOVA_SERVERS_DIR) : path.join(app.getPath('userData'), 'servers'));
+async function jdkFor(_root: string, minMajor: number): Promise<Jdk | null> {
+  return (await discoverJdks()).find((j) => j.major >= minMajor) ?? null;
+}
 const ptys = new Set<number>();
 const searches = new Set<number>();
 
@@ -67,6 +77,7 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   catch { watcher = null; /* watching unsupported: tree refresh falls back to manual */ }
   await store.addRecent(workspace.root, workspace.name);
   win?.setTitle(`${workspace.name} — DHeaven Code: NOVA`);
+  await lsp.setWorkspace(workspace.root);
   return workspace;
 }
 const needWs = () => { if (!workspace) throw new AppError('NO_WORKSPACE', 'No folder is open'); return workspace; };
@@ -119,7 +130,29 @@ const handlers: Handlers = {
   'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
   'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
   'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
-  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) killAllPtys(); return { trusted: t }; },
+  'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); if (!t) { killAllPtys(); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },
+  'lsp.status.v1': async () => lsp.status(),
+  'lsp.logs.v1': async ({ serverId }) => [...lsp.logs(serverId)],
+  'lsp.restart.v1': async ({ serverId }) => { await requireTrust(); await lsp.restart(serverId); return null; },
+  'lsp.stop.v1': async ({ serverId }) => { await lsp.stop(serverId); return null; },
+  'lsp.install.v1': async ({ serverId }) => {
+    const def = Object.values(SERVERS).find((d) => d.id === serverId);
+    if (!def) throw new AppError('NOT_FOUND', 'Unknown server');
+    const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('lsp.install.v1', { serverId, message, ...extra });
+    void installServer(def, serversDir(), (u) => net.fetch(u as string), note)
+      .then(() => { note('Installed', { done: true }); void lsp.restart(serverId).catch(() => {}); })
+      .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
+    return null;
+  },
+  'lsp.open.v1': async ({ languageId, uri, version, text }) => { needWs(); await lsp.didOpen(languageId, uri, version, text); return null; },
+  'lsp.change.v1': async ({ languageId, uri, version, changes }) => { lsp.didChange(languageId, uri, version, changes); return null; },
+  'lsp.save.v1': async ({ languageId, uri }) => { lsp.didSave(languageId, uri); return null; },
+  'lsp.close.v1': async ({ languageId, uri }) => { lsp.didClose(languageId, uri); return null; },
+  'lsp.request.v1': async ({ languageId, reqId, method, params }) => {
+    try { return (await lsp.request(languageId, reqId, method, params, method === 'textDocument/formatting' || method === 'textDocument/rename' || method === 'textDocument/references' ? 30_000 : 15_000)) ?? null; }
+    catch (e) { if (e instanceof LspRequestError) throw new AppError('LSP_ERROR', `${e.code}: ${e.message}`); throw e; }
+  },
+  'lsp.cancel.v1': async ({ reqId }) => { lsp.cancel(reqId); return null; },
   'recent.list.v1': async () => store.listRecent(),
   'settings.get.v1': async () => store.getSettings(),
   'settings.update.v1': async (patch) => store.updateSettings(patch),
@@ -192,6 +225,10 @@ app.whenReady().then(async () => {
     emit('daemon.status.v1', message ? { state, message } : { state });
   });
   daemon.start();
+  lsp = new LspManager({
+    serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
+    isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
+  });
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   protocol.handle('nova', async (req) => {
     const { pathname } = new URL(req.url);
@@ -207,4 +244,4 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { watcher?.stop(); daemon?.stop(); app.quit(); });
+app.on('window-all-closed', () => { watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });

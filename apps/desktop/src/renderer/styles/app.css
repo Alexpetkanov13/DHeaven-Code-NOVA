@@ -98,3 +98,20 @@ button { font: inherit; color: inherit; }
 .term-host { flex: 1; min-height: 0; padding: 0 0 0 8px; }
 .trust-note { padding: 12px; display: flex; gap: 10px; align-items: center; }
 .banner { background: rgba(255,184,107,.12); border-bottom: 1px solid rgba(255,184,107,.35); padding: 6px 12px; display: flex; gap: 10px; align-items: center; font-size: 12px; }
+.ls-card { border: 1px solid var(--nova-border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 5px; background: rgba(14,21,48,.5); }
+.ls-state { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; background: #232B4D; }
+.st-ready { background: rgba(92,242,176,.18); color: #5CF2B0; }
+.st-starting, .st-restarting { background: rgba(63,224,255,.15); color: var(--nova-cyan); }
+.st-failed, .st-crashed { background: rgba(255,107,139,.18); color: var(--nova-danger); }
+.st-blocked { background: rgba(255,184,107,.15); color: #FFB86B; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--nova-border); color: #4C567F; text-decoration: line-through; }
+.badge.on { color: var(--nova-text); border-color: rgba(63,224,255,.4); text-decoration: none; background: rgba(63,224,255,.08); }
+.ls-logs { max-height: 220px; overflow: auto; font: 11px var(--nova-font-mono); background: var(--nova-graphite-900); padding: 6px; border-radius: 4px; white-space: pre-wrap; margin: 0; }
+.small { font-size: 11px; }
+.problems .file { margin-top: 4px; font-weight: 600; font-family: var(--nova-font-ui); }
+.prob { cursor: pointer; padding: 1px 0 1px 12px; font-family: var(--nova-font-ui); }
+.prob:hover { background: rgba(255,255,255,.05); }
+.panel-tabs .count { margin-left: 4px; background: var(--nova-ultraviolet-800); border-radius: 8px; padding: 0 5px; }
+.preview-list { max-height: 260px; overflow: auto; font-size: 12px; margin: 0; padding-left: 18px; }
+.term-out { font: 12px var(--nova-font-mono); white-space: pre-wrap; flex: 1; overflow: auto; padding: 0 12px 8px; margin: 0; }

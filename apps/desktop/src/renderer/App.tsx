@@ -10,16 +10,20 @@ import { SearchView } from './components/SearchView';
 import { ScmView } from './components/ScmView';
 import { TerminalPanel } from './components/TerminalPanel';
 import { ConfirmBox, ContextMenu, InputBox, type MenuItem } from './components/InputBox';
-import { parentOf, joinRel } from './lib/paths';
+import { parentOf, joinRel, joinAbs, uriToRel } from './lib/paths';
+import { LspBridge } from './lib/lsp';
+import { applyTextEdits } from './lib/textEdits';
+import { LanguageServersView } from './components/LanguageServersView';
+import { ProblemsPanel, type ProblemItem } from './components/ProblemsPanel';
 import logo from './logo.svg';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
 interface DiffState { rel: string; staged: boolean; original: monaco.editor.ITextModel; modified: monaco.editor.ITextModel }
-type View = 'explorer' | 'search' | 'scm';
+type View = 'explorer' | 'search' | 'scm' | 'lsp';
 type Dialog =
-  | { kind: 'input'; title: string; initial?: string; submit(v: string): void }
-  | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void } }
+  | { kind: 'input'; title: string; initial?: string; submit(v: string): void; cancel?(): void }
+  | { kind: 'confirm'; message: string; confirmLabel: string; confirm(): void; extra?: { label: string; run(): void }; list?: string[]; cancel?(): void }
   | null;
 const SETTINGS_TAB = '__settings__';
 const DIFF_TAB = '__diff__';
@@ -36,7 +40,8 @@ export function App() {
   const [active, setActive] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffState | null>(null);
   const [view, setView] = useState<View>('explorer');
-  const [panelTab, setPanelTab] = useState<'output' | 'terminal'>('output');
+  const [panelTab, setPanelTab] = useState<'output' | 'terminal' | 'problems'>('output');
+  const [problems, setProblems] = useState(new Map<string, ProblemItem[]>());
   const [palette, setPalette] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -54,6 +59,9 @@ export function App() {
   const tabsRef = useRef(tabs); tabsRef.current = tabs;
   const activeRef = useRef(active); activeRef.current = active;
   const childrenRef = useRef(children); childrenRef.current = children;
+  const wsRef = useRef(ws); wsRef.current = ws;
+  const modelUri = (rel: string) => monaco.Uri.file(joinAbs(wsRef.current!.root, rel));
+  const bridgeRef = useRef<LspBridge | null>(null);
 
   const out = useCallback((t: string, err = false) => setLog((l) => [...l.slice(-500), { t: `[${new Date().toLocaleTimeString()}] ${t}`, err }]), []);
   const fail = useCallback((e: unknown) => out(e instanceof IpcError ? `${e.code}: ${e.message}` : String(e), true), [out]);
@@ -80,8 +88,9 @@ export function App() {
 
   const adoptWorkspace = useCallback(async (info: WorkspaceInfo | null) => {
     if (!info) return;
-    for (const t of tabsRef.current) t.model.dispose();
-    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set()); setDiff(null);
+    for (const t of tabsRef.current) { bridgeRef.current?.detach(t.model); t.model.dispose(); }
+    for (const m of monaco.editor.getModels()) if (m.uri.scheme === 'file') m.dispose();
+    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set()); setDiff(null); setProblems(new Map());
     setWs(info);
     out(`Opened folder ${info.root}`);
     await loadDir('');
@@ -98,8 +107,11 @@ export function App() {
     if (!tabsRef.current.some((t) => t.rel === rel)) {
       try {
         const { content, mtimeMs } = await call('fs.read.v1', { rel });
-        const model = monaco.editor.createModel(content, undefined, monaco.Uri.file('/' + rel));
+        const existing = monaco.editor.getModel(modelUri(rel)); // may exist from go-to-definition/references
+        const model = existing ?? monaco.editor.createModel(content, undefined, modelUri(rel));
+        if (existing && existing.getValue() !== content && existing.getAlternativeVersionId() === 1) existing.setValue(content);
         model.onDidChangeContent(() => bump((n) => n + 1));
+        bridgeRef.current?.attach(model);
         setTabs((ts) => [...ts, { rel, model, savedAltId: model.getAlternativeVersionId(), mtimeMs, disk: 'ok' }]);
       } catch (e) { fail(e); return; }
     }
@@ -110,6 +122,50 @@ export function App() {
   const toggleDir = useCallback((rel: string) => {
     setExpanded((s) => { const n = new Set(s); if (n.has(rel)) n.delete(rel); else { n.add(rel); void loadDir(rel).catch(fail); } return n; });
   }, [loadDir, fail]);
+
+  // ---- LSP bridge (created once; UI callbacks read refs)
+  const openFileRef = useRef(openFile); openFileRef.current = openFile;
+  useEffect(() => {
+    const relOf = (uri: string) => (wsRef.current ? uriToRel(monaco.Uri.parse(uri).fsPath, wsRef.current.root) : null);
+    const b = new LspBridge({
+      ensureModel: async (uri) => {
+        if (monaco.editor.getModel(monaco.Uri.parse(uri))) return;
+        const rel = relOf(uri); if (rel === null) return;
+        const { content } = await call('fs.read.v1', { rel });
+        if (!monaco.editor.getModel(monaco.Uri.parse(uri))) monaco.editor.createModel(content, undefined, monaco.Uri.parse(uri));
+      },
+      prompt: (title, initial) => new Promise((resolve) => setDialog({ kind: 'input', title, initial, submit: (v) => { setDialog(null); resolve(v); }, cancel: () => resolve(null) })),
+      confirmEdit: (title, summary) => new Promise((resolve) => setDialog({
+        kind: 'confirm', message: `${title}: ${summary.reduce((a, x) => a + x.edits, 0)} edit(s) in ${summary.length} file(s)`, confirmLabel: 'Apply',
+        list: summary.map((x) => `${relOf(x.uri) ?? x.uri} — ${x.edits} edit(s)`), confirm: () => { setDialog(null); resolve(true); }, cancel: () => resolve(false),
+      })),
+      log: (m, err) => out(m, err),
+      writeUnopened: async (uri, edits) => {
+        const rel = relOf(uri); if (rel === null) throw new Error(`Edit outside workspace refused: ${uri}`);
+        const { content, mtimeMs } = await call('fs.read.v1', { rel });
+        await call('fs.write.v1', { rel, content: applyTextEdits(content, edits), expectedMtimeMs: mtimeMs });
+      },
+      onDiagnostics: (uri, serverId, ds) => {
+        const rel = relOf(uri);
+        setProblems((m) => {
+          const n = new Map(m); const key = `${serverId}|${uri}`;
+          if (!ds.length || rel === null) n.delete(key);
+          else n.set(key, ds.map((d) => ({ uri, rel, line: d.range.start.line + 1, col: d.range.start.character + 1, severity: d.severity === 2 ? 'warning' : d.severity && d.severity > 2 ? 'info' : 'error', message: d.message, source: d.source ?? serverId })));
+          return n;
+        });
+      },
+    });
+    bridgeRef.current = b;
+    const opener = monaco.editor.registerEditorOpener({
+      openCodeEditor: (_src, resource, sel) => {
+        const rel = relOf(resource.toString()); if (rel === null) return false;
+        const pos = sel && 'startLineNumber' in sel ? { l: sel.startLineNumber, c: sel.startColumn } : sel && 'lineNumber' in sel ? { l: sel.lineNumber, c: sel.column } : null;
+        void openFileRef.current(rel, pos?.l, pos?.c);
+        return true;
+      },
+    });
+    return () => { opener.dispose(); b.dispose(); bridgeRef.current = null; };
+  }, [out]);
 
   // ---- watcher: refresh loaded dirs, flag/reload open tabs changed on disk
   useEffect(() => on('fs.changed.v1', ({ rels }) => {
@@ -143,6 +199,7 @@ export function App() {
     try {
       const r = await call('fs.write.v1', { rel: t.rel, content: t.model.getValue(), ...(force ? {} : { expectedMtimeMs: t.mtimeMs }) });
       markSaved(t.rel, t.rel, r.mtimeMs);
+      bridgeRef.current?.saved(t.model);
       out(`Saved ${t.rel}`);
     } catch (e) {
       if (e instanceof IpcError && e.code === 'CONFLICT') {
@@ -173,7 +230,7 @@ export function App() {
     if (!t) return;
     const doClose = () => {
       const rest = tabsRef.current.filter((x) => x.rel !== rel);
-      t.model.dispose(); setTabs(rest);
+      bridgeRef.current?.detach(t.model); t.model.dispose(); setTabs(rest);
       if (activeRef.current === rel) setActive(rest.at(-1)?.rel ?? null);
     };
     if (t.model.getAlternativeVersionId() !== t.savedAltId) setDialog({ kind: 'confirm', message: `Discard unsaved changes to ${rel}?`, confirmLabel: 'Discard', confirm: () => { setDialog(null); doClose(); } });
@@ -204,10 +261,10 @@ export function App() {
         setTabs((ts) => ts.map((t) => {
           if (t.rel !== e.rel && !t.rel.startsWith(e.rel + '/')) return t;
           const nrel = r.rel + t.rel.slice(e.rel.length);
-          const model = monaco.editor.createModel(t.model.getValue(), undefined, monaco.Uri.file('/' + nrel));
+          const model = monaco.editor.createModel(t.model.getValue(), undefined, modelUri(nrel));
           model.onDidChangeContent(() => bump((n) => n + 1));
           const dirty = t.model.getAlternativeVersionId() !== t.savedAltId;
-          t.model.dispose();
+          bridgeRef.current?.detach(t.model); t.model.dispose(); bridgeRef.current?.attach(model);
           return { ...t, rel: nrel, model, savedAltId: dirty ? -1 : model.getAlternativeVersionId() };
         }));
         setActive((a) => (a && (a === e.rel || a.startsWith(e.rel + '/')) ? r.rel + a.slice(e.rel.length) : a));
@@ -268,6 +325,7 @@ export function App() {
     if (!editorRef.current) {
       const ed = monaco.editor.create(hostRef.current, { theme: 'nova-dark', automaticLayout: true, fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace' });
       ed.onDidChangeCursorPosition((e) => setCursor({ ln: e.position.lineNumber, col: e.position.column }));
+      ed.addAction({ id: 'nova.rename', label: 'Rename Symbol (with preview)', keybindings: [monaco.KeyCode.F2], contextMenuGroupId: '1_modification', run: (e) => bridgeRef.current?.rename(e) });
       editorRef.current = ed;
     }
     editorRef.current.setModel(activeTab.model);
@@ -338,6 +396,7 @@ export function App() {
   const isDirty = (t: Tab) => t.model.getAlternativeVersionId() !== t.savedAltId;
   const showSettings = active === SETTINGS_TAB;
   const showDiff = active === DIFF_TAB && !!diff;
+  const problemList = [...problems.values()].flat().sort((a, b) => a.rel.localeCompare(b.rel) || a.line - b.line);
 
   return (
     <div className={`wb mode-${settings.mode}`}>
@@ -347,6 +406,7 @@ export function App() {
           <button className={view === 'explorer' && showSidebar ? 'on' : ''} title="Explorer (Ctrl+B)" aria-label="Explorer" onClick={() => showView('explorer')}>☰</button>
           <button className={view === 'search' && showSidebar ? 'on' : ''} title="Search (Ctrl+Shift+F)" aria-label="Search" onClick={() => showView('search')}>⌕</button>
           <button className={view === 'scm' && showSidebar ? 'on' : ''} title="Source Control (Ctrl+Shift+G)" aria-label="Source Control" onClick={() => showView('scm')}>⑂</button>
+          <button className={view === 'lsp' && showSidebar ? 'on' : ''} title="Language Servers" aria-label="Language Servers" onClick={() => showView('lsp')}>◇</button>
           <button title="Command Palette (Ctrl+Shift+P)" aria-label="Command Palette" onClick={() => setPalette(true)}>⌘</button>
           <button title="Settings (Ctrl+,)" aria-label="Settings" onClick={() => setActive(SETTINGS_TAB)}>⚙</button>
         </nav>
@@ -354,7 +414,7 @@ export function App() {
           <>
             <aside className="sidebar" style={{ width: settings.sidebarWidth }} aria-label="Sidebar">
               <div className="sidebar-title">
-                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : 'Source Control'}</span>
+                <span>{view === 'explorer' ? `Explorer${ws ? ` — ${ws.name}` : ''}` : view === 'search' ? 'Search' : view === 'lsp' ? 'Language Servers' : 'Source Control'}</span>
                 {view === 'explorer' && ws && (
                   <span>
                     <button className="icon-btn" title="New File" aria-label="New File" onClick={() => newEntry('file', targetDir(selectedEntry()))}>＋</button>
@@ -370,6 +430,12 @@ export function App() {
                 <Explorer children={children} expanded={expanded} selected={selected} onSelect={setSelected} onToggle={toggleDir} onOpen={(r) => void openFile(r)} onContext={onContext} />
               ) : view === 'search' ? (
                 <SearchView onOpen={(r, l, c) => void openFile(r, l, c)} onError={fail} onLog={out} />
+              ) : view === 'lsp' ? (
+                <LanguageServersView trusted={trusted} onError={fail} askInstall={(sv) => setDialog({
+                  kind: 'confirm', confirmLabel: 'Download and Install',
+                  message: `Download ${sv.name} ${sv.version} (${sv.download.sizeHint}, ${sv.download.license}) from ${sv.download.url}? The archive is verified against a pinned SHA-256 before it is extracted. Nothing is downloaded without this confirmation.`,
+                  confirm: () => { setDialog(null); void call('lsp.install.v1', { serverId: sv.id, consent: true }).catch(fail); },
+                })} />
               ) : (
                 <ScmView refreshKey={scmKey} trusted={trusted} onOpenDiff={(r, s, u) => void openDiff(r, s, u)} onError={fail} onLog={out} />
               )}
@@ -417,8 +483,11 @@ export function App() {
                 <div className="panel-tabs">
                   <button className={panelTab === 'output' ? 'on' : ''} onClick={() => setPanelTab('output')}>Output</button>
                   <button className={panelTab === 'terminal' ? 'on' : ''} onClick={() => setPanelTab('terminal')}>Terminal</button>
+                  <button className={panelTab === 'problems' ? 'on' : ''} onClick={() => setPanelTab('problems')}>Problems{problemList.length ? <span className="count" aria-label="problem count">{problemList.length}</span> : null}</button>
                 </div>
-                {panelTab === 'output' ? (
+                {panelTab === 'problems' ? (
+                  <ProblemsPanel items={problemList} onOpen={(p) => void openFile(p.rel, p.line, p.col)} />
+                ) : panelTab === 'output' ? (
                   <div className="panel-body" role="log">{log.map((l, i) => <div key={i} className={l.err ? 'err' : ''}>{l.t}</div>)}</div>
                 ) : ws ? (
                   <TerminalPanel trusted={trusted} workspaceKey={ws.root} onError={fail} onTrust={() => askTrust(ws)} />
@@ -441,8 +510,8 @@ export function App() {
       </footer>
       {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); editorRef.current?.focus(); }} />}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}
-      {dialog?.kind === 'input' && <InputBox title={dialog.title} initial={dialog.initial ?? ''} onSubmit={dialog.submit} onCancel={() => setDialog(null)} />}
-      {dialog?.kind === 'confirm' && <ConfirmBox message={dialog.message} confirmLabel={dialog.confirmLabel} onConfirm={dialog.confirm} onCancel={() => setDialog(null)} {...(dialog.extra ? { extra: dialog.extra } : {})} />}
+      {dialog?.kind === 'input' && <InputBox title={dialog.title} initial={dialog.initial ?? ''} onSubmit={dialog.submit} onCancel={() => { dialog.cancel?.(); setDialog(null); }} />}
+      {dialog?.kind === 'confirm' && <ConfirmBox message={dialog.message} confirmLabel={dialog.confirmLabel} onConfirm={dialog.confirm} onCancel={() => { dialog.cancel?.(); setDialog(null); }} {...(dialog.extra ? { extra: dialog.extra } : {})}>{dialog.list && <ul className="preview-list" aria-label="Edit preview">{dialog.list.map((l) => <li key={l}>{l}</li>)}</ul>}</ConfirmBox>}
     </div>
   );
 }
