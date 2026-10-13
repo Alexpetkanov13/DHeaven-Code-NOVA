@@ -66,11 +66,18 @@ test('debug: breakpoint hit, local variable, watch + console evaluate, step, con
   await expect(page.getByLabel('Debug Console')).toContainText('4');
   if (shots) await page.screenshot({ path: path.join(shots, 'nova-debug.png') });
 
+  // greet() is a single statement, so Step Out from the breakpoint returns to the caller, App.main (line 6); then
+  // Step Over runs the println and stays in main. (Stepping out of main itself would land in JDK Thread code.)
+  const top = page.getByLabel('Call stack').locator('.frame').first();
+  await page.getByRole('button', { name: 'Step Out' }).click();
+  await expect(state(page)).toHaveAttribute('data-debug-state', 'stopped', { timeout: 30_000 });
+  await expect(state(page)).toContainText('step');
+  await expect(top).toContainText('main', { timeout: 30_000 });
+  await expect(top).toContainText('App.java');
   await page.getByRole('button', { name: 'Step Over' }).click();
-  await expect(state(page)).toContainText('step', { timeout: 30_000 });
-  await expect(state(page)).toHaveAttribute('data-debug-state', 'stopped');
-  await page.getByRole('button', { name: 'Step Out' }).click(); // back in App.main
-  await expect(page.getByLabel('Call stack').locator('.frame').first()).toContainText('main', { timeout: 30_000 });
+  await expect(page.getByLabel('Debug Console')).toContainText('Hello, NOVA!', { timeout: 30_000 });
+  await expect(state(page)).toHaveAttribute('data-debug-state', 'stopped', { timeout: 30_000 });
+  await expect(top).toContainText('App.java');
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(state(page)).toHaveAttribute('data-debug-state', 'terminated', { timeout: 60_000 });
   await expect(page.getByLabel('Debug Console')).toContainText('Hello, NOVA!');
