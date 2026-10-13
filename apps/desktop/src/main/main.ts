@@ -21,6 +21,7 @@ import { detectGradle, killRun, listTasks, runGradle, stopGradleDaemons } from '
 import { DebugManager } from './dap/manager';
 import { JAVA_DEBUG, javaAdapter } from './dap/java';
 import { pythonAdapter } from './dap/python';
+import { JS_DEBUG_SETUP, nodeAdapter } from './dap/node';
 import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, type TestFramework } from './junit';
 import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
 import { parsePytestXml, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
@@ -111,6 +112,13 @@ const testRuns = new Map<number, ChildProcess>();
 /** The workspace's Python (chosen interpreter, else venv, else PATH) for tests, the debugger and Pyright. */
 async function pythonForWs(root: string) { return resolvePython(root, (await wsSettings.get(root)).pythonPath); }
 let lastPythons: PyInterpreter[] = [];
+/** js-debug's dapDebugServer.js: the file the user chose, else <serversDir>/js-debug/src/dapDebugServer.js. */
+async function jsDebugInfo(): Promise<{ path: string | null; source: 'chosen' | 'servers dir' | null }> {
+  const chosen = (await store.getSettings()).debugAdapterPaths['js-debug'];
+  if (chosen && fsSync.existsSync(chosen)) return { path: chosen, source: 'chosen' };
+  const def = path.join(serversDir(), 'js-debug', 'src', 'dapDebugServer.js');
+  return fsSync.existsSync(def) ? { path: def, source: 'servers dir' } : { path: null, source: null };
+}
 /** One framework's part of a test run; output is streamed as tests.output.v1, results come from the tool's report. */
 async function runTestTarget(root: string, runId: number, framework: TestFramework, filters: string[], debug: boolean): Promise<{ code: number | null; results: TestCase[]; error: string | null }> {
   const out = (data: string) => emit('tests.output.v1', { runId, data });
@@ -404,6 +412,18 @@ const handlers: Handlers = {
   'debug.getBreakpoints.v1': async () => dbg.getBreakpoints(),
   'debug.setBreakpoints.v1': async ({ path: file, breakpoints }) => { assertWithin(needWs().root, file); return dbg.setBreakpoints(file, breakpoints); },
   'debug.adapter.v1': async () => ({ installed: JAVA_DEBUG.isInstalledSync(serversDir()), name: JAVA_DEBUG.name, version: JAVA_DEBUG.version, url: JAVA_DEBUG.download.url, sizeHint: JAVA_DEBUG.download.sizeHint, license: JAVA_DEBUG.download.license, sha256: JAVA_DEBUG.download.sha256 }),
+  'debug.jsDebug.v1': async () => ({ ...(await jsDebugInfo()), setup: JS_DEBUG_SETUP }),
+  'debug.jsDebugPath.v1': async ({ pick }) => {
+    let file: string | null = null;
+    if (pick) {
+      const r = await dialog.showOpenDialog(win!, { title: 'Choose js-debug/src/dapDebugServer.js', properties: ['openFile', 'dontAddToRecent'], filters: [{ name: 'dapDebugServer.js', extensions: ['js'] }] });
+      if (r.canceled || !r.filePaths[0]) return { path: (await jsDebugInfo()).path };
+      file = r.filePaths[0];
+      if (path.basename(file) !== 'dapDebugServer.js') throw new AppError('INVALID_REQUEST', 'Pick the dapDebugServer.js file from the js-debug release (js-debug/src/dapDebugServer.js).');
+    }
+    await store.setDebugAdapterPath('js-debug', file);
+    return { path: file };
+  },
   'debug.install.v1': async () => {
     const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('debug.install.v1', { message, ...extra });
     void installServer(JAVA_DEBUG, serversDir(), (u) => net.fetch(u as string), note)
@@ -617,7 +637,7 @@ app.whenReady().then(async () => {
       waitJdtReady: (t, s) => lsp.waitReady('java', t, s),
       jdkFor: async (cfg) => (cfg.javaHome ? await probeJdk(cfg.javaHome, 'launch config') : null) ?? jdkFor(needWs().root, 0),
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
-    }), python: pythonAdapter({ pythonFor: pythonForWs }) },
+    }), python: pythonAdapter({ pythonFor: pythonForWs }), node: nodeAdapter({ node: () => findExecutable(['node']), jsDebug: async () => (await jsDebugInfo()).path }) },
   });
   const aiDir = path.join(app.getPath('userData'), 'ai');
   ai = new AiService({

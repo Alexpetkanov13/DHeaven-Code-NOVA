@@ -30,8 +30,11 @@ export class DapConnection extends EventEmitter {
   private pending = new Map<number, Pending>();
   closed = false;
   private trace = openTrace();
-  constructor(private stream: NodeJS.ReadWriteStream & { destroy?(): void }, private onReverse: (command: string, args: unknown) => unknown = () => { throw new Error('unsupported'); }) {
+  /** Replaceable: the debug manager wraps it to handle `startDebugging` (child sessions). */
+  onReverse: (command: string, args: unknown) => unknown;
+  constructor(private stream: NodeJS.ReadWriteStream & { destroy?(): void }, onReverse: (command: string, args: unknown) => unknown = () => { throw new Error('unsupported'); }) {
     super();
+    this.onReverse = onReverse;
     const dec = new FrameDecoder((m) => this.onMessage(m as DapMsg));
     stream.on('data', (c: Buffer) => { try { dec.push(c); } catch (e) { this.close(`protocol error: ${e}`); } });
     stream.on('error', (e: Error) => this.close(`stream error: ${e.message}`));

@@ -37,6 +37,8 @@ export const Settings = z.object({
   restoreSession: z.boolean().default(true),
   /** Executable chosen per external language server (set only through the main-process file picker, never by a renderer patch). */
   lspServerPaths: z.record(z.string().max(64), z.string().max(4096)).default({}),
+  /** Debug adapters the user installs (js-debug's dapDebugServer.js); main-only, like lspServerPaths. */
+  debugAdapterPaths: z.record(z.string().max(64), z.string().max(4096)).default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -45,7 +47,7 @@ export const SessionDraft = z.object({ rel: z.string().min(1).max(4096), content
 export type SessionDraft = z.infer<typeof SessionDraft>;
 export const SessionState = z.object({ layout: z.unknown(), views: z.unknown(), drafts: z.array(SessionDraft).max(100), savedAt: z.number() });
 export type SessionState = z.infer<typeof SessionState>;
-export const SettingsPatch = Settings.partial().omit({ version: true, lspServerPaths: true });
+export const SettingsPatch = Settings.partial().omit({ version: true, lspServerPaths: true, debugAdapterPaths: true });
 
 const ExtId = z.string().max(256).regex(/^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/);
 export const GitFile = z.object({ path: z.string(), index: z.string(), worktree: z.string() });
@@ -151,7 +153,7 @@ export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve',
 const FileUri = z.string().max(8192).startsWith('file://');
 
 export const LaunchConfig = z.object({
-  id: z.string().max(64), name: z.string().min(1).max(200), type: z.enum(['java', 'python']), request: z.enum(['launch', 'attach']),
+  id: z.string().max(64), name: z.string().min(1).max(200), type: z.enum(['java', 'python', 'node']), request: z.enum(['launch', 'attach']),
   mainClass: z.string().max(500).optional(), projectName: z.string().max(200).optional(),
   args: z.string().max(32768).optional(), vmArgs: z.string().max(32768).optional(),
   env: z.record(z.string().max(256), z.string().max(32768)).optional(), cwd: z.string().max(4096).optional(),
@@ -274,6 +276,9 @@ export const channels = {
   'debug.getBreakpoints.v1': def(z.object({}), z.object({ breakpoints: z.record(z.string(), z.array(SourceBreakpoint)), verified: z.record(z.string(), z.array(VerifiedBp)) })),
   'debug.setBreakpoints.v1': def(z.object({ path: z.string().max(4096), breakpoints: z.array(SourceBreakpoint).max(1000) }), z.array(VerifiedBp).nullable()),
   'debug.adapter.v1': def(z.object({}), z.object({ installed: z.boolean(), name: z.string(), version: z.string(), url: z.string(), sizeHint: z.string(), license: z.string(), sha256: z.string() })),
+  /** js-debug (Node.js): where it was found, or setup guidance; pick=true opens main's file picker, pick=false clears. */
+  'debug.jsDebug.v1': def(z.object({}), z.object({ path: z.string().nullable(), source: z.enum(['chosen', 'servers dir']).nullable(), setup: z.string() })),
+  'debug.jsDebugPath.v1': def(z.object({ pick: z.boolean() }), z.object({ path: z.string().nullable() })),
   'debug.install.v1': def(z.object({ consent: z.literal(true) }), z.null()),
   'tests.discover.v1': def(z.object({}), z.array(TestNode)),
   /** targets: [] = every framework detected in the workspace. Filters are passed as separate argv entries (never a shell); a leading '-' is refused so a filter can't become an option. */

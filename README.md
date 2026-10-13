@@ -2,7 +2,7 @@
 
 *Build Beyond Limits.* — an original desktop IDE by **DHeaven**.
 
-**Status:** Phases 1–6 + the Minecraft developer pack, plus language servers for Java, Kotlin, TypeScript/JavaScript, Python and Rust, a Testing view for JUnit (Gradle), pytest, cargo test, Vitest and Jest, and debugging for Java and Python. CI (unit + Playwright Electron E2E) runs on Linux and Windows; the Windows installer is built but unsigned. What is verified, and what is not, is in DEVELOPMENT_PROGRESS.md.
+**Status:** Phases 1–6 + the Minecraft developer pack, plus language servers for Java, Kotlin, TypeScript/JavaScript, Python and Rust, a Testing view for JUnit (Gradle), pytest, cargo test, Vitest and Jest, and debugging for Java, Python and Node.js. CI (unit + Playwright Electron E2E) runs on Linux and Windows; the Windows installer is built but unsigned. What is verified, and what is not, is in DEVELOPMENT_PROGRESS.md.
 
 - Architecture: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 - Decisions: [docs/architecture/adr/](docs/architecture/adr/)

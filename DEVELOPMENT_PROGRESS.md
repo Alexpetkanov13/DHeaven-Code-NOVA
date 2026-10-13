@@ -1,6 +1,24 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python debugging + interpreter selection. CI runs unit + E2E on Linux and Windows.
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python/Node.js debugging + interpreter selection. CI runs unit + E2E on Linux and Windows.
+
+## Node.js debugging with js-debug; DAP child sessions (2026-10-13, ADR-0022)
+- **`main/dap/node.ts`:** runs `node dapDebugServer.js 0 127.0.0.1` with the user's `node`, reads the announced port and connects over TCP. Launch is `pwa-node` (program/args/cwd/env, internalConsole, skipFiles node internals, source maps); attach uses port 9229 by default.
+- **js-debug is user-installed** (the `js-debug-dap` release tarball; not on npm). Found via Choose js-debug… (main picker, `settings.debugAdapterPaths`, main-only) or `<servers dir>/js-debug/src/dapDebugServer.js`. When missing, Run and Debug shows the setup steps and disables Start.
+- **`DebugManager` handles `startDebugging` child sessions generically:**
+  - Factories may return `openChild()`; the client advertises `supportsStartDebuggingRequest`.
+  - The child gets the same handshake and becomes the active session.
+  - Per-connection `initialized` promises are created before any request. The first version waited for `initialized` only after the initialize response and timed out on the existing fake-adapter unit tests; fixed.
+  - Stop disconnects children first; `terminated` closes all of the session's connections.
+- **UI:** a Node.js type, Program/Arguments/Env/Working dir fields, a js-debug box (location or setup, Choose/Forget). The call stack shows basenames (js-debug's `source.name` is a full path).
+- **Environment note:** GitHub release assets and the GitHub API for other repos are blocked here. js-debug was built from source (`git clone` of the `v1.140.0` tag, `npm ci`, `gulp dapDebugServer`, 1 s) into `~/nova-servers/js-debug`; CI does the same.
+
+| Check | Command | Result |
+|---|---|---|
+| Real-adapter integration | `NOVA_SERVERS_DIR=~/nova-servers vitest run src/main/dap` | PASS 12, including the real **Java** session (JDT LS + java-debug) and the real debugpy sessions after the manager refactor. `node.int.test.ts` (3× in a row): breakpoint in the `startDebugging` child at `greeter.js:3` (frame `global.greet`); `name='NOVA'` (V8 doesn't list the `const` at the `return`; seen in the scopes dump); evaluate `'NOVA!'`; step; live breakpoint removal; run to exit with all output. Missing js-debug fails with the setup text |
+| E2E | `e2e/debug-node.spec.ts` | PASS 2/2. UI config (Type Node.js, Program `src/main.js`) → js-debug "servers folder" → stops at the gutter breakpoint, call stack `greet … greeter.js:3`, Variables `name: 'NOVA'`, console `'NOVA!'`, Step Over, ✕ removes the breakpoint, Continue → `Hello, Rust!`, terminated. Without js-debug: setup text, Start disabled; Choose js-debug… → "chosen by you", Start enabled, stored in `settings.json` |
+| Regression | `debug.spec` (Java), `debug-python`, `tests.spec` (JUnit debug-attach), `python-interpreter` | PASS 9/9 |
+| Unit | `pnpm test` | PASS (desktop 136 +5 skipped without a servers dir) |
 
 ## Python interpreter selection (2026-10-13, ADR-0021)
 - **`main/python.ts`:** `discoverPythons` (workspace venvs, PATH, pyenv, conda base/envs, `py -0p`; each probed; deduplicated by real executable) and `resolvePython` (selected for this workspace > workspace venv > PATH as a full path; the Windows Store stub is skipped; a broken selection is reported in `note`).
@@ -128,7 +146,7 @@ Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-ls
 - Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
 
 ### Next slice (by dependency/value)
-1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: node:test/Mocha, and DAP for js-debug (Node) and CodeLLDB (Rust). Vitest/Jest are done (ADR-0019 addendum). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
+1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: node:test/Mocha, and DAP for CodeLLDB (Rust). Node.js debugging is done (ADR-0022). Vitest/Jest are done (ADR-0019 addendum). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
 2. ~~Python interpreter/venv picker~~ (done, ADR-0021).
 3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
 4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).

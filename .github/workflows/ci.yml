@@ -70,6 +70,15 @@ jobs:
           rustup component add rust-analyzer
           typescript-language-server --version
           rust-analyzer --version
+      - name: js-debug for Node.js debugging (built from the pinned v1.140.0 tag)
+        # Users download the js-debug-dap release; CI builds the same dapDebugServer.js from source.
+        shell: bash
+        run: |
+          git clone --depth 1 --branch v1.140.0 https://github.com/microsoft/vscode-js-debug "$RUNNER_TEMP/js-debug-src"
+          cd "$RUNNER_TEMP/js-debug-src"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx gulp dapDebugServer
+          node -e "require('fs').cpSync('dist', require('path').join(process.env.NOVA_SERVERS_DIR, 'js-debug'), { recursive: true })"
       - name: Playwright Electron runtime deps (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
