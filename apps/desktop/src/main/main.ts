@@ -492,4 +492,7 @@ app.whenReady().then(async () => {
   buildMenu();
   await createWindow();
 });
-app.on('window-all-closed', () => { ai?.cancelAll(); void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+app.on('window-all-closed', () => {
+  // Hard deadline: a child that ignores shutdown (e.g. a JVM on Windows holding handles) must never keep the app alive.
+  setTimeout(() => app.exit(0), 8000).unref();
+  ai?.cancelAll(); void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
