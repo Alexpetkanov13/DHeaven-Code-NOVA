@@ -42,6 +42,20 @@ pub fn cancel(st: &State, id: u64) {
     if let Some(c) = st.searches.active.lock().unwrap().get(&id) { c.store(true, Ordering::SeqCst); }
 }
 
+/// Lists workspace files (honoring .gitignore/.ignore, skipping .git) for Quick Open. Returns (rels, truncated).
+pub fn list_files(root: &str, max: usize) -> (Vec<String>, bool) {
+    let root = Path::new(root);
+    let mut out = Vec::new();
+    for entry in ignore::WalkBuilder::new(root).hidden(false).filter_entry(|e| e.file_name() != ".git").build() {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_some_and(|t| t.is_file()) { continue; }
+        if out.len() >= max { return (out, true); }
+        out.push(entry.path().strip_prefix(root).unwrap_or(entry.path()).to_string_lossy().replace('\\', "/"));
+    }
+    out.sort();
+    (out, false)
+}
+
 /// Walks the tree honoring .gitignore/.ignore, streams matches in batches of 100. Returns (total, truncated).
 pub fn run(p: &Params, cancel: &AtomicBool, mut emit: impl FnMut(Vec<Value>)) -> anyhow::Result<(usize, bool)> {
     let pattern = if p.is_regex { p.query.clone() } else { regex_escape(&p.query) };
@@ -110,6 +124,20 @@ mod tests {
         std::fs::write(d.path().join("a.ts"), "a.b(c)\naxb(c)\n").unwrap();
         let p = Params { root: d.path().to_string_lossy().into(), query: "a.b(c)".into(), is_regex: false, case_sensitive: true, max_results: 10 };
         assert_eq!(run(&p, &AtomicBool::new(false), |_| {}).unwrap().0, 1);
+    }
+    #[test]
+    fn lists_files_respecting_gitignore() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("src/x")).unwrap();
+        std::fs::create_dir(d.path().join("ignored")).unwrap();
+        std::fs::create_dir(d.path().join(".git")).unwrap();
+        std::fs::write(d.path().join("src/x/A.java"), "").unwrap();
+        std::fs::write(d.path().join("ignored/b.txt"), "").unwrap();
+        std::fs::write(d.path().join(".gitignore"), "ignored/\n").unwrap();
+        let (f, t) = list_files(d.path().to_str().unwrap(), 100);
+        assert_eq!(f, vec![".gitignore".to_string(), "src/x/A.java".to_string()]);
+        assert!(!t);
+        assert!(list_files(d.path().to_str().unwrap(), 1).1);
     }
     #[test]
     fn utf16_columns() { assert_eq!(utf16_col("é😀x", "é😀".len()), 3); }

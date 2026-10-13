@@ -19,12 +19,13 @@ export const CAPABILITY_BADGES: [string, string, string][] = [
   ['renameProvider', 'textDocument/rename', 'rename'],
   ['documentFormattingProvider', 'textDocument/formatting', 'formatting'],
   ['codeActionProvider', 'textDocument/codeAction', 'codeActions'],
+  ['documentSymbolProvider', 'textDocument/documentSymbol', 'symbols'],
 ];
 export function badges(caps: Record<string, unknown>, dynamic: Set<string>): string[] {
   return CAPABILITY_BADGES.filter(([k, m]) => (caps[k] !== undefined && caps[k] !== false) || dynamic.has(m)).map(([, , b]) => b);
 }
 
-export const ALLOWED_REQUESTS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'workspace/executeCommand'] as const;
+export const ALLOWED_REQUESTS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'textDocument/documentSymbol', 'workspace/executeCommand'] as const;
 
 interface Entry { def: ServerDef; logs: string[]; conn: LspConnection | null; crashes: number[]; dynamic: Set<string>; reason: string | null; state: ServerStatus['state'] }
 
@@ -104,7 +105,7 @@ export class LspManager {
             completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'], resolveSupport: { properties: ['documentation', 'detail'] } }, contextSupport: true },
             hover: { contentFormat: ['markdown', 'plaintext'] },
             signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true } } },
-            definition: { linkSupport: true }, references: {}, rename: { prepareSupport: true }, formatting: {},
+            definition: { linkSupport: true }, references: {}, rename: { prepareSupport: true }, formatting: {}, documentSymbol: { hierarchicalDocumentSymbolSupport: true },
             codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: ['', 'quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports'] } } },
           },
           window: { workDoneProgress: false },

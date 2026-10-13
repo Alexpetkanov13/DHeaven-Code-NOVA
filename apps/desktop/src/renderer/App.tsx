@@ -31,6 +31,9 @@ import { terminalQueue } from './lib/terminalQueue';
 import { AiView, AiPreviewDialog, InlineDiffDialog } from './components/AiView';
 import { NewProjectWizard } from './components/NewProjectWizard';
 import { MinecraftView } from './components/MinecraftView';
+import { NavHistory } from './lib/navHistory';
+import { flatten, symbolPathAt, type Sym } from './lib/outline';
+import type { PickerOptions } from './components/CommandPalette';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
@@ -58,6 +61,10 @@ export function App() {
   const [panelTab, setPanelTab] = useState<'output' | 'terminal' | 'problems' | 'debug'>('output');
   const [problems, setProblems] = useState(new Map<string, ProblemItem[]>());
   const [palette, setPalette] = useState(false);
+  const [picker, setPicker] = useState<({ items: Command[] } & PickerOptions) | null>(null);
+  const [outline, setOutline] = useState<{ rel: string; syms: Sym[] } | null>(null);
+  const [nav] = useState(() => new NavHistory());
+  const navigating = useRef(0);
   const [wizard, setWizard] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -393,7 +400,11 @@ export function App() {
     if (!hostRef.current || !activeTab) return;
     if (!editorRef.current) {
       const ed = monaco.editor.create(hostRef.current, { theme: 'nova-dark', automaticLayout: true, fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace' });
-      ed.onDidChangeCursorPosition((e) => setCursor({ ln: e.position.lineNumber, col: e.position.column }));
+      ed.onDidChangeCursorPosition((e) => {
+        setCursor({ ln: e.position.lineNumber, col: e.position.column });
+        const rel = activeRef.current;
+        if (rel && Date.now() > navigating.current && tabsRef.current.some((t) => t.rel === rel && t.model === ed.getModel())) nav.push({ rel, line: e.position.lineNumber, col: e.position.column });
+      });
       debugStore.attach(ed);
       ed.addAction({ id: 'nova.ai.explain', label: 'NOVA AI: Explain Selection', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('explainSelection') });
       ed.addAction({ id: 'nova.ai.inline', label: 'NOVA AI: Inline Edit…', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('inlineEdit') });
@@ -403,8 +414,9 @@ export function App() {
       editorRef.current = ed;
     }
     editorRef.current.setModel(activeTab.model);
+    { const p = editorRef.current.getPosition(); if (p && Date.now() > navigating.current) nav.push({ rel: activeTab.rel, line: p.lineNumber, col: p.column }); } // switching files is a navigation
     editorRef.current.focus();
-  }, [activeTab, debugStore]);
+  }, [activeTab, debugStore, nav]);
   useEffect(() => {
     if (!settings || !editorRef.current) return;
     editorRef.current.updateOptions({ fontSize: settings.editorFontSize, tabSize: settings.editorTabSize, wordWrap: settings.editorWordWrap ? 'on' : 'off', minimap: { enabled: settings.editorMinimap } });
@@ -416,6 +428,42 @@ export function App() {
     diffEdRef.current.setModel({ original: diff.original, modified: diff.modified });
   }, [diff, active]);
   useEffect(() => { if (!diff && diffEdRef.current) { diffEdRef.current.dispose(); diffEdRef.current = null; } }, [diff]);
+
+  // Outline for breadcrumbs / Go to Symbol: recomputed (debounced) when the active model changes or is edited.
+  const outlineVersion = activeTab ? `${activeTab.rel}:${activeTab.model.getVersionId()}` : '';
+  useEffect(() => {
+    const t = activeTab; if (!t) { setOutline(null); return; }
+    const h = window.setTimeout(() => { void bridgeRef.current?.outline(t.model).then((syms) => { if (syms) setOutline({ rel: t.rel, syms }); else setOutline((o) => (o?.rel === t.rel ? o : null)); }); }, 300);
+    return () => window.clearTimeout(h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on rel+version
+  }, [outlineVersion]);
+
+  /** Jump to a location; programmatic cursor moves are not recorded, so the target is pushed explicitly (unless replaying history). */
+  const goTo = useCallback(async (loc: { rel: string; line: number; col: number } | null, fromHistory = false) => {
+    if (!loc) return;
+    if (!fromHistory) nav.push(loc);
+    navigating.current = Date.now() + 400;
+    await openFile(loc.rel, loc.line, loc.col);
+  }, [openFile, nav]);
+  const quickOpen = useCallback(async () => {
+    if (!wsRef.current) { fail('Open a folder to use Go to File'); return; }
+    try {
+      const { files, truncated } = await call('files.list.v1', {});
+      const open = new Set(tabsRef.current.map((t) => t.rel));
+      const items = [...files.filter((f) => open.has(f)), ...files.filter((f) => !open.has(f))]
+        .map((rel) => ({ id: rel, title: rel, ...(open.has(rel) ? { detail: 'open' } : {}), run: () => void openFile(rel) }));
+      setPicker({ items, label: 'Go to File', placeholder: `Search files by name${truncated ? ' (first 50,000 files)' : ''}…`, empty: 'No matching files', keepOrder: true });
+    } catch (e) { fail(e); }
+  }, [fail, openFile]);
+  const gotoSymbol = useCallback(async () => {
+    const t = tabsRef.current.find((x) => x.rel === activeRef.current);
+    if (!t) { fail('Open a file to use Go to Symbol'); return; }
+    const syms = (await bridgeRef.current?.outline(t.model)) ?? null;
+    if (!syms) { fail(`No symbol information for ${t.rel} (language server not ready or unsupported language)`); return; }
+    const items = flatten(syms).map(({ sym, container }, i) => ({ id: `${i}`, title: sym.name, detail: `${sym.kind}${container ? ` · ${container}` : ''} · line ${sym.line}`,
+      run: () => void goTo({ rel: t.rel, line: sym.line, col: sym.col }) }));
+    setPicker({ items, label: 'Go to Symbol', placeholder: 'Go to symbol in editor…', empty: 'No matching symbols', keepOrder: true });
+  }, [fail, goTo]);
 
   const sizeTimer = useRef<number | undefined>(undefined);
   const resize = (key: 'sidebarWidth' | 'panelHeight', delta: number, min: number, max: number) => {
@@ -485,6 +533,10 @@ export function App() {
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
     { id: 'project.new', title: 'File: New Project…', run: () => setWizard(true) },
+    { id: 'workbench.quickOpen', title: 'Go to File…', keybinding: 'Ctrl+P', run: () => void quickOpen() },
+    { id: 'editor.gotoSymbol', title: 'Go to Symbol in Editor…', keybinding: 'Ctrl+Shift+O', run: () => void gotoSymbol() },
+    { id: 'nav.back', title: 'Go Back', keybinding: 'Alt+Left', run: () => void goTo(nav.back(), true) },
+    { id: 'nav.forward', title: 'Go Forward', keybinding: 'Alt+Right', run: () => void goTo(nav.forward(), true) },
     ...(runTasksView ? [{ id: 'runTasks.open', title: `View: ${runTasksView}`, run: () => { setView('runTasks'); setShowSidebar(true); } }] : []),
     { id: 'file.save', title: 'File: Save', keybinding: 'Ctrl+S', run: () => void save() },
     { id: 'file.saveAs', title: 'File: Save As…', keybinding: 'Ctrl+Shift+S', run: () => void saveAs() },
@@ -515,7 +567,7 @@ export function App() {
     ...extClient.contributions.commands.filter((c) => c.palette).map((c) => ({ id: `ext:${c.command}`, title: `${c.category ?? c.extName}: ${c.title}`, run: () => runExt(c.command) })),
     ...extClient.contributions.tasks.map((t) => ({ id: `task:${t.extId}:${t.id}`, title: `Tasks: Run ${t.label} (${t.extName})`, run: () => runExt(t.command) })),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- contributions is a mutable field; listing it re-memoizes on refresh
-  ], [aiClient, aiAction, extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust]);
+  ], [aiClient, aiAction, extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust, quickOpen, gotoSymbol, goTo, nav]);
 
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
@@ -524,13 +576,17 @@ export function App() {
   }), []);
   useEffect(() => {
     const kd = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      const runCmd = (id: string) => { e.preventDefault(); e.stopPropagation(); commandsRef.current.find((c) => c.id === id)?.run(); };
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { runCmd(e.key === 'ArrowLeft' ? 'nav.back' : 'nav.forward'); return; }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key.toLowerCase() === 'p' && !e.shiftKey) { runCmd('workbench.quickOpen'); return; }
+      if (e.key.toLowerCase() === 'o' && e.shiftKey) { runCmd('editor.gotoSymbol'); return; }
       const map: Record<string, string> = { ',': 'workbench.settings', '`': 'terminal.focus' };
       const k = e.shiftKey ? ({ F: 'workbench.search', G: 'workbench.scm', X: 'workbench.extensions' } as Record<string, string>)[e.key.toUpperCase()] : map[e.key];
       if (k) { e.preventDefault(); commandsRef.current.find((c) => c.id === k)?.run(); }
     };
-    window.addEventListener('keydown', kd);
-    return () => window.removeEventListener('keydown', kd);
+    window.addEventListener('keydown', kd, true); // capture: runs before Monaco's own keybindings
+    return () => window.removeEventListener('keydown', kd, true);
   }, []);
 
   if (!settings) return null;
@@ -632,6 +688,14 @@ export function App() {
               </div>
             )}
             {showSettings ? <SettingsView settings={settings} onChange={updateSettings} /> : null}
+            {activeTab && !showSettings && !showDiff && (
+              <nav className="breadcrumbs" aria-label="Breadcrumbs">
+                {activeTab.rel.split('/').map((seg, i, a) => <span key={`p${i}`}>{i > 0 && <span className="sep">›</span>}<span className={i === a.length - 1 ? 'sym' : ''}>{seg}</span></span>)}
+                {outline?.rel === activeTab.rel && symbolPathAt(outline.syms, cursor.ln).map((sym, i) => (
+                  <span key={`s${i}`}><span className="sep">›</span><button title={`${sym.kind} ${sym.name} (Go to Symbol…)`} onClick={() => void gotoSymbol()}>{sym.name}</button></span>
+                ))}
+              </nav>
+            )}
             <div className="editor-host" ref={hostRef} style={{ display: activeTab && !showSettings && !showDiff ? 'block' : 'none' }} />
             <div className="editor-host" ref={diffHostRef} aria-label="Diff editor" style={{ display: showDiff ? 'block' : 'none' }} />
             {!activeTab && !showSettings && !showDiff && (
@@ -697,6 +761,7 @@ export function App() {
         <span>{settings.mode === 'focus' ? 'Focus' : 'NOVA'} mode</span>
       </footer>
       {palette && <CommandPalette commands={commands} onClose={() => { setPalette(false); setTimeout(() => { if (!document.querySelector('.palette-backdrop')) editorRef.current?.focus(); }, 0); }} />}
+      {picker && <CommandPalette commands={picker.items} {...picker} onClose={() => { setPicker(null); setTimeout(() => { if (!document.querySelector('.palette-backdrop')) editorRef.current?.focus(); }, 0); }} />}
       <AiPreviewDialog client={aiClient} />
       {wizard && <NewProjectWizard onClose={() => setWizard(false)} onCreated={(root, open) => { setWizard(false); if (open) void openRecent(root); }} />}
       <InlineDiffDialog client={aiClient} onApply={applyInline} />

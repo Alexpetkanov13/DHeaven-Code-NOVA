@@ -1,23 +1,25 @@
 import { useMemo, useState } from 'react';
 import { fuzzyScore } from '../lib/fuzzy';
 
-export interface Command { id: string; title: string; keybinding?: string; run(): void }
+export interface Command { id: string; title: string; detail?: string; keybinding?: string; run(): void }
 
-export function CommandPalette({ commands, onClose }: { commands: Command[]; onClose(): void }) {
+export interface PickerOptions { label?: string; placeholder?: string; empty?: string; /** keep source order (no fuzzy sort) when the query is empty */ keepOrder?: boolean }
+
+export function CommandPalette({ commands, onClose, label = 'Command Palette', placeholder = 'Type a command…', empty = 'No matching commands', keepOrder }: { commands: Command[]; onClose(): void } & PickerOptions) {
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const items = useMemo(
-    () => commands.map((c) => ({ c, s: fuzzyScore(q, c.title) })).filter((x) => x.s >= 0).sort((a, b) => b.s - a.s).map((x) => x.c),
-    [commands, q],
+    () => commands.map((c) => ({ c, s: fuzzyScore(q, c.title) })).filter((x) => x.s >= 0).sort((a, b) => (keepOrder && !q ? 0 : b.s - a.s)).slice(0, 200).map((x) => x.c),
+    [commands, q, keepOrder],
   );
   const run = (c?: Command) => { if (!c) return; onClose(); c.run(); };
   return (
     <div className="palette-backdrop" onMouseDown={onClose}>
-      <div className="palette" role="dialog" aria-label="Command Palette" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="palette" role="dialog" aria-label={label} onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
-          aria-label="Type a command"
-          placeholder="Type a command…"
+          aria-label={placeholder}
+          placeholder={placeholder}
           value={q}
           onChange={(e) => { setQ(e.target.value); setIdx(0); }}
           onKeyDown={(e) => {
@@ -30,10 +32,10 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
         <ul role="listbox">
           {items.map((c, i) => (
             <li key={c.id} role="option" aria-selected={i === idx} className={i === idx ? 'active' : ''} onMouseEnter={() => setIdx(i)} onClick={() => run(c)}>
-              <span>{c.title}</span>{c.keybinding && <kbd>{c.keybinding}</kbd>}
+              <span>{c.title}{c.detail && <small className="pick-detail">{c.detail}</small>}</span>{c.keybinding && <kbd>{c.keybinding}</kbd>}
             </li>
           ))}
-          {items.length === 0 && <li>No matching commands</li>}
+          {items.length === 0 && <li>{empty}</li>}
         </ul>
       </div>
     </div>

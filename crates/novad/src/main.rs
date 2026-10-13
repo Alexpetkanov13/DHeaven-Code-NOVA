@@ -46,6 +46,10 @@ async fn dispatch(method: &str, p: Value, out: &Out, st: &Arc<State>) -> anyhow:
         "ping" => Ok(json!("pong")),
         "search.start" => search::start(serde_json::from_value(p)?, out.clone(), st),
         "search.cancel" => { search::cancel(st, p["searchId"].as_u64().unwrap_or(0)); Ok(json!(null)) }
+        "files.list" => {
+            let (files, truncated) = search::list_files(p["root"].as_str().unwrap_or(""), p["max"].as_u64().unwrap_or(50_000) as usize);
+            Ok(json!({"files": files, "truncated": truncated}))
+        }
         "pty.spawn" => pty::spawn(serde_json::from_value(p)?, out.clone(), st),
         "pty.write" => pty::write(st, p["ptyId"].as_u64().unwrap_or(0), p["data"].as_str().unwrap_or("")),
         "pty.resize" => pty::resize(st, p["ptyId"].as_u64().unwrap_or(0), p["cols"].as_u64().unwrap_or(80) as u16, p["rows"].as_u64().unwrap_or(24) as u16),

@@ -1,6 +1,7 @@
 import type { LspDiagnostic, ServerStatus } from '@nova/ipc-contract';
 import { monaco } from './monaco';
 import { call, on } from './ipc';
+import { fromLsp, fromTsNavTree, type Sym } from './outline';
 import { flattenWorkspaceEdit, type TextEdit, type WorkspaceEditLike } from './textEdits';
 
 export const LSP_LANGS = ['java', 'kotlin'];
@@ -94,6 +95,27 @@ export class LspBridge {
     if (!t) return;
     t.sub.dispose(); this.tracked.delete(uri);
     void call('lsp.close.v1', { languageId: t.lang, uri }).catch(() => {});
+  }
+
+  /** Document outline: language server for java/kotlin, the bundled TypeScript worker for ts/js; null when unavailable. */
+  async outline(model: monaco.editor.ITextModel): Promise<Sym[] | null> {
+    const lang = model.getLanguageId();
+    if (LSP_LANGS.includes(lang)) {
+      if (!this.caps(lang).includes('symbols')) return null;
+      const r = await this.req<unknown>(model, 'textDocument/documentSymbol', { textDocument: { uri: model.uri.toString() } });
+      return r === null ? null : fromLsp(r);
+    }
+    if (lang === 'typescript' || lang === 'javascript') {
+      try {
+        const get = lang === 'typescript' ? monaco.typescript.getTypeScriptWorker : monaco.typescript.getJavaScriptWorker;
+        const worker = await (await get())(model.uri);
+        const version = model.getVersionId();
+        const tree = await worker.getNavigationTree(model.uri.toString());
+        if (model.isDisposed() || model.getVersionId() !== version) return null;
+        return fromTsNavTree(tree, (o) => model.getPositionAt(o));
+      } catch { return null; }
+    }
+    return null;
   }
 
   /** Request with cancellation + stale-response guard (drops results computed for an older model version). */

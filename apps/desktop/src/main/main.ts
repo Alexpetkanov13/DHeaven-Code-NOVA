@@ -193,6 +193,7 @@ const handlers: Handlers = {
     searches.add(r.searchId);
     return r;
   },
+  'files.list.v1': async () => daemon.call<{ files: string[]; truncated: boolean }>('files.list', { root: needWs().root, max: 50_000 }),
   'search.cancel.v1': async ({ searchId }) => { await daemon.call('search.cancel', { searchId }); return null; },
   'replace.apply.v1': async (p) => applyReplace(needWs().root, p.rels, p.query, p.isRegex, p.caseSensitive, p.replacement),
   'terminal.profiles.v1': async () => {
@@ -415,6 +416,12 @@ function buildMenu() {
       { type: 'separator' }, { role: 'quit' },
     ] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'Go', submenu: [ // shortcuts are handled in the renderer (so they also work inside the editor); labels only here
+      { label: 'Go to File…', accelerator: 'CmdOrCtrl+P', registerAccelerator: false, click: send('workbench.quickOpen') },
+      { label: 'Go to Symbol in Editor…', accelerator: 'CmdOrCtrl+Shift+O', registerAccelerator: false, click: send('editor.gotoSymbol') },
+      { label: 'Back', accelerator: 'Alt+Left', registerAccelerator: false, click: send('nav.back') },
+      { label: 'Forward', accelerator: 'Alt+Right', registerAccelerator: false, click: send('nav.forward') },
+    ] },
     { label: 'View', submenu: [
       { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+P', click: send('workbench.commandPalette') },
       { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: send('workbench.toggleSidebar') },

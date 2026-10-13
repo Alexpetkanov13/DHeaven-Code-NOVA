@@ -131,7 +131,7 @@ export const ServerStatus = z.object({
   download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }),
 });
 export type ServerStatus = z.infer<typeof ServerStatus>;
-export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'workspace/executeCommand'] as const;
+export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'textDocument/documentSymbol', 'workspace/executeCommand'] as const;
 const FileUri = z.string().max(8192).startsWith('file://');
 
 export const LaunchConfig = z.object({
@@ -183,6 +183,7 @@ export const channels = {
     z.object({ query: z.string().min(1).max(1000), isRegex: z.boolean().default(false), caseSensitive: z.boolean().default(false), maxResults: z.number().int().min(1).max(20000).default(5000) }),
     z.object({ searchId: z.number() }),
   ),
+  'files.list.v1': def(z.object({}), z.object({ files: z.array(z.string()), truncated: z.boolean() })),
   'search.cancel.v1': def(z.object({ searchId: z.number() }), z.null()),
   'replace.apply.v1': def(
     z.object({ query: z.string().min(1).max(1000), isRegex: z.boolean(), caseSensitive: z.boolean(), replacement: z.string().max(10000), rels: z.array(RelPath).max(5000) }),
