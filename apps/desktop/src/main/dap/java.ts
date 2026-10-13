@@ -65,8 +65,8 @@ export function javaAdapter(d: JavaDeps): AdapterFactory {
     // JDT LS cancels in-flight commands (-32800) while it re-imports/builds the project (slow on Windows); retry those.
     let port = NaN;
     for (let i = 0; ; i++) {
-      try { port = Number(await d.exec('vscode.java.startDebugSession', [], 30_000)); break; }
-      catch (e) { if (i >= 5 || signal.aborted || !/cancel/i.test(String((e as Error)?.message ?? e))) throw e; log('startDebugSession was cancelled by JDT LS (project build in progress); retrying…'); await sleep(2000, signal); }
+      try { port = Number(await d.exec('vscode.java.startDebugSession', [], 120_000)); break; }
+      catch (e) { if (i >= 5 || signal.aborted || !/cancel|timed out/i.test(String((e as Error)?.message ?? e))) throw e; log(`startDebugSession: ${String((e as Error)?.message ?? e)} (JDT LS busy building the project); retrying…`); await sleep(2000, signal); }
     }
     if (!Number.isInteger(port) || port <= 0) throw new Error(`java-debug returned no port (${port}); is the debug bundle loaded?`);
     log(`Connecting to java-debug on 127.0.0.1:${port}`);
