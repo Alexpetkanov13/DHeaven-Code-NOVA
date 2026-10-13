@@ -7,6 +7,8 @@ import type { LaunchSpec } from './server';
 
 export type ServerId = 'jdtls' | 'kotlin-ls';
 export interface ServerDef {
+  /** initialize can take long (kotlin-ls resolves the Gradle classpath inside it; slow on Windows). Default 120 s. */
+  initTimeoutMs?: number;
   id: string; name: string; languages: string[]; version: string; minJava: number;
   /** Highest JDK major the server is known to run on (inclusive); undefined = no limit. */
   maxJava?: number;
@@ -57,7 +59,7 @@ export const SERVERS: Record<ServerId, ServerDef> = {
     limitations: 'Server-initiated workspace/applyEdit is not yet supported, so some code actions that rely on it will report "not applied".',
   },
   'kotlin-ls': {
-    id: 'kotlin-ls', name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11, maxJava: 21,
+    id: 'kotlin-ls', initTimeoutMs: 600_000, name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11, maxJava: 21,
     download: { url: 'https://github.com/fwcd/kotlin-language-server/releases/download/1.3.13/server.zip', sha256: '4fe7d71d087b307c7869036171bd9d8c6a4284cd7c25b89098b0a24eb2d9b6d2', kind: 'zip', sizeHint: '~90 MB', license: 'MIT' },
     installDir: (d) => path.join(d, 'kotlin-ls'),
     isInstalled: async (d) => exists(path.join(d, 'kotlin-ls', 'server', 'bin', 'kotlin-language-server')),

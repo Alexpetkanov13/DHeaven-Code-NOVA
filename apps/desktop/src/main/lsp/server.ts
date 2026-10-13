@@ -81,7 +81,7 @@ export class LspConnection extends EventEmitter {
     const id = this.nextId++;
     onId?.(id);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.cancel(id); reject(new LspRequestError(-32800, `${method} timed out after ${timeoutMs} ms`)); }, timeoutMs);
+      const timer = setTimeout(() => { reject(new LspRequestError(-32800, `${method} timed out after ${timeoutMs} ms`)); this.cancel(id); }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer, method });
       this.send({ jsonrpc: '2.0', id, method, params });
     });

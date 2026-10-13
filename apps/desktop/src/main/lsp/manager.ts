@@ -121,7 +121,7 @@ export class LspManager {
     });
     conn.on('crash', (why: string) => this.onCrash(e, conn, jdk, why));
     try {
-      await conn.start();
+      await conn.start(e.def.initTimeoutMs);
       if (e.conn !== conn) return;
       e.state = 'ready'; this.publish();
     } catch (err) {
