@@ -13,16 +13,22 @@ export function TestsView({ trusted, hasWorkspace, onError, onOpen, onLog }: Pro
   const [selected, setSelected] = useState<string | null>(null);
   const [output, setOutput] = useState('');
   const runRef = useRef<number | null>(null);
+  // Gradle output (and on fast runs even 'done') can arrive before tests.run.v1 returns the run id; buffer events for
+  // unknown runs while a start is pending and replay them, instead of dropping them.
+  const pendingStart = useRef(false);
+  const early = useRef<{ output: Map<number, string>; done: Map<number, Parameters<Parameters<typeof on<'tests.done.v1'>>[1]>[0]> }>({ output: new Map(), done: new Map() });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const discover = useCallback(() => void call('tests.discover.v1', {}).then(setNodes).catch(onError), [onError]);
   useEffect(() => { if (hasWorkspace) discover(); else setNodes([]); }, [hasWorkspace, discover]);
   useEffect(() => {
-    const a = on('tests.output.v1', ({ runId, data }) => { if (runId === runRef.current) setOutput((o) => (o + data).slice(-256 * 1024)); });
+    const a = on('tests.output.v1', ({ runId, data }) => {
+      if (runId === runRef.current) setOutput((o) => (o + data).slice(-256 * 1024));
+      else if (pendingStart.current) early.current.output.set(runId, ((early.current.output.get(runId) ?? '') + data).slice(-256 * 1024));
+    });
     const b = on('tests.done.v1', (e) => {
-      if (e.runId !== runRef.current) return;
-      setRun((r) => r && { ...r, done: true, code: e.code, killed: e.killed, error: e.error });
-      setResults((prev) => { const n = { ...prev }; for (const t of e.results) n[t.id] = t; return n; });
+      if (e.runId === runRef.current) applyDone(e);
+      else if (pendingStart.current) early.current.done.set(e.runId, e);
     });
     const c = on('tests.debugReady.v1', (e) => {
       if (e.runId !== runRef.current) return;
@@ -32,11 +38,24 @@ export function TestsView({ trusted, hasWorkspace, onError, onOpen, onLog }: Pro
     return () => { a(); b(); c(); };
   }, [onError, onLog]);
 
+  function applyDone(e: { code: number | null; killed: boolean; error: string | null; results: TestCase[] }) {
+    setRun((r) => r && { ...r, done: true, code: e.code, killed: e.killed, error: e.error });
+    setResults((prev) => { const n = { ...prev }; for (const t of e.results) n[t.id] = t; return n; });
+  }
   const start = async (filters: string[], debug = false) => {
+    // Show the new run as started immediately: the previous run's "done" must not linger while this one spins up.
+    runRef.current = null; pendingStart.current = true; early.current.output.clear(); early.current.done.clear();
+    setRun({ runId: -1, filters, debug, done: false, code: null, killed: false, error: null });
     setOutput(`> gradle ${['test', ...filters.flatMap((f) => ['--tests', f]), '--rerun', ...(debug ? ['--debug-jvm'] : [])].join(' ')}\n`);
     // Mark targets as running; results for other tests are kept from earlier runs.
     setResults((prev) => { const n = { ...prev }; for (const k of Object.keys(n)) if (!filters.length || filters.some((f) => k === f || k.startsWith(f + '.'))) delete n[k]; return n; });
-    try { const { runId } = await call('tests.run.v1', { filters, debug }); runRef.current = runId; setRun({ runId, filters, debug, done: false, code: null, killed: false, error: null }); } catch (e) { onError(e); }
+    try {
+      const { runId } = await call('tests.run.v1', { filters, debug });
+      runRef.current = runId; setRun({ runId, filters, debug, done: false, code: null, killed: false, error: null });
+      const out = early.current.output.get(runId); if (out) setOutput((o) => (o + out).slice(-256 * 1024));
+      const d = early.current.done.get(runId); if (d) applyDone(d);
+    } catch (e) { setRun((r) => r && { ...r, done: true, error: String(e) }); onError(e); }
+    finally { pendingStart.current = false; early.current.output.clear(); early.current.done.clear(); }
   };
   const busy = !!run && !run.done;
   const all = Object.values(results);
