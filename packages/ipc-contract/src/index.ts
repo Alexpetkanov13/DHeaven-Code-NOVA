@@ -151,12 +151,15 @@ export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve',
 const FileUri = z.string().max(8192).startsWith('file://');
 
 export const LaunchConfig = z.object({
-  id: z.string().max(64), name: z.string().min(1).max(200), type: z.literal('java'), request: z.enum(['launch', 'attach']),
+  id: z.string().max(64), name: z.string().min(1).max(200), type: z.enum(['java', 'python']), request: z.enum(['launch', 'attach']),
   mainClass: z.string().max(500).optional(), projectName: z.string().max(200).optional(),
   args: z.string().max(32768).optional(), vmArgs: z.string().max(32768).optional(),
   env: z.record(z.string().max(256), z.string().max(32768)).optional(), cwd: z.string().max(4096).optional(),
   javaHome: z.string().max(4096).nullable().optional(), preLaunchTask: z.string().max(512).optional(),
   hostName: z.string().max(255).optional(), port: z.number().int().min(1).max(65535).optional(),
+  /** python (debugpy): a script relative to the workspace, or a module run with -m (e.g. `pytest`, `app.main`). */
+  program: z.string().max(4096).optional(), module: z.string().max(500).regex(/^$|^[A-Za-z_][\w.]*$/).optional(),
+  justMyCode: z.boolean().optional(),
 });
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
 export const SourceBreakpoint = z.object({ line: z.number().int().min(1), condition: z.string().max(4096).optional(), logMessage: z.string().max(4096).optional(), hitCondition: z.string().max(256).optional() });

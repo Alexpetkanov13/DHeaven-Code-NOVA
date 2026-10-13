@@ -149,6 +149,7 @@ button { font: inherit; color: inherit; }
 .debug .gradle-row select, .debug .gradle-row input { flex: 1; min-width: 0; }
 .cfg-form { display: flex; flex-direction: column; gap: 4px; }
 .cfg-form label { display: flex; flex-direction: column; gap: 2px; color: #9aa3b5; font-size: 11px; }
+.cfg-form label.check { flex-direction: row; align-items: center; gap: 6px; }
 .cfg-form input, .cfg-form select, .cfg-form textarea { font: inherit; font-size: 12px; }
 .debug-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px; border-top: 1px solid rgba(255,255,255,0.06); border-bottom: 1px solid rgba(255,255,255,0.06); }
 .debug-status { padding: 4px 10px; color: #9aa3b5; }

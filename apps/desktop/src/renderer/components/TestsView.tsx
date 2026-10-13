@@ -66,6 +66,9 @@ export function TestsView({ trusted, hasWorkspace, onError, onOpen, onLog }: Pro
     } catch (e) { setRun((r) => r && { ...r, done: true, error: String(e) }); onError(e); }
     finally { pendingStart.current = false; early.current.output.clear(); early.current.done.clear(); }
   };
+  // Runs the test under debugpy in the Run and Debug session (breakpoints, stack, variables); results stay in the debug console.
+  const debugPytest = (id: string) => void call('debug.start.v1', { config: { id: 'pytest-debug', name: `Debug ${id.split('::').pop()}`, type: 'python', request: 'launch', module: 'pytest', args: `-q "${id.replace(/["\\]/g, '\\$&')}"` } })
+    .then(() => onLog(`Debugging ${id} (python -m pytest under debugpy); see Run and Debug and the Debug Console.`)).catch(onError);
   const busy = !!run && !run.done;
   const all = Object.values(results);
   const count = (s: string) => all.filter((t) => t.status === s).length;
@@ -114,6 +117,7 @@ export function TestsView({ trusted, hasWorkspace, onError, onOpen, onLog }: Pro
                   <span className="actions">
                     <button className="link" title="Run" disabled={!trusted || busy} onClick={(e) => { e.stopPropagation(); void start(targetsForNodes([n], nodes)); }}>▶</button>
                     {n.method && n.framework === 'gradle' && <button className="link" title="Debug test (Gradle --debug-jvm + attach)" disabled={!trusted || busy} onClick={(e) => { e.stopPropagation(); void start(targetsForNodes([n], nodes), true); }}>🐞</button>}
+                    {n.method && n.framework === 'pytest' && <button className="link" title="Debug test (python -m pytest under debugpy)" disabled={!trusted || busy} onClick={(e) => { e.stopPropagation(); debugPytest(n.id); }}>🐞</button>}
                   </span>
                 </div>
               );

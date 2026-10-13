@@ -1,6 +1,24 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test runs. CI runs unit + E2E on Linux and Windows.
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test runs + Python debugging. CI runs unit + E2E on Linux and Windows.
+
+## Python debugging with debugpy (2026-10-13, ADR-0020)
+- **`main/dap/python.ts`: a second DAP adapter** next to java-debug, using the existing generic `DebugManager`.
+  - Runs `<python> -m debugpy.adapter` over stdio; its process tree is killed on close.
+  - Interpreter as for tests (workspace venv, else PATH). Before starting, a debugpy import probe gives a clear error with the pip command if it's missing.
+- **Launch config `type: 'python'`:** program or module, shell-like args, cwd, env, justMyCode; also attach to `debugpy --listen`.
+- **UI:**
+  - Run and Debug has a Type selector; Java fields and the java-debug banner are hidden for Python, and Start no longer requires java-debug for Python configs.
+  - The Testing view's 🐞 on pytest tests runs `-m pytest -q "<node id>"` under debugpy.
+  - Call-stack frames fall back to the file name from `source.path`. debugpy sends no `source.name`, which the E2E caught as `greet :6`.
+- **CI:** `debugpy==1.8.22`.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint | `pnpm typecheck`, `pnpm lint` | PASS |
+| Unit + real-adapter integration | `vitest run` (desktop) | PASS 126 (+3 skipped). `python.test.ts`: arg splitting; a missing debugpy names the interpreter and the pip command; **real debugpy 1.8.22** run 3× in a row: breakpoint → stack `greet:6` → local `name='NOVA'` → evaluate → step (`step`) → live breakpoint removal → continue → output + `exited with code 0`; `-m pytest <node id>` stops inside the test; program+module refused. The first version of the test expected one breakpoint hit; the DAP trace showed `greet()` runs 3 times (correct behaviour) |
+| E2E | `xvfb-run -a npx playwright test e2e/debug-python.spec.ts` | PASS 2/2, twice. UI config (Type → Python, Module `app.main`) → stops at a gutter breakpoint; Debug Console shows `Python: python3 (PATH) · debugpy 1.8.22`; call stack `greet greeter.py:6`; Variables `name: 'NOVA'`; console evaluate `'NOVA!'`; Step Out → `main.py`; ✕ removes the breakpoint mid-session; Continue → `> Hello, Rust!`, `exited with code 0`. Testing 🐞 on `test_greets_by_name` → stops in the test → Continue → `1 passed` |
+| Regression | `debug.spec`, `tests.spec`, `testing-langs.spec` | PASS (Java debug, JUnit debug-attach unchanged) |
 
 ## Testing view: pytest and cargo test (2026-10-13, ADR-0019)
 - **Frameworks** (`main/testing/`): `gradle` (unchanged), `pytest`, `cargo`. Nodes and results carry `framework`; ids are the tool's own names (pytest node ids, libtest `module::fn`), so reruns pass them straight back.
@@ -67,14 +85,14 @@ Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-ls
 
 ### Limitations
 - No Python interpreter/venv picker (Pyright uses PATH python or its own config); Pyright has no formatter.
-- No DAP for TS/Python/Rust (tests: pytest and cargo test since ADR-0019; no JS runners).
+- No DAP for TS/JS or Rust (Python: debugpy since ADR-0020; tests: pytest and cargo test since ADR-0019; no JS runners).
 - Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
 - Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
 - The TS gate relies on Monaco internals (`tsMode.js` `Adapter` export); re-check on Monaco upgrades. The E2E's "no *Cannot find module*" assertion guards it.
 - Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
 
 ### Next slice (by dependency/value)
-1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: vitest/jest/node:test, and DAP for debugpy (Python), js-debug (Node) and CodeLLDB (Rust). The DAP layer is already generic (ADR-0014).
+1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: vitest/jest/node:test, and DAP for js-debug (Node) and CodeLLDB (Rust). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
 2. Python interpreter/venv picker (discover `.venv`, `venv`, conda, PATH), passed to Pyright via `workspace/configuration` (`python.pythonPath`) and to run/test/debug.
 3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
 4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).

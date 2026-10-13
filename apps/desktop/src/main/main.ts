@@ -20,6 +20,7 @@ import type { ChildProcess } from 'node:child_process';
 import { detectGradle, killRun, listTasks, runGradle, stopGradleDaemons } from './gradle';
 import { DebugManager } from './dap/manager';
 import { JAVA_DEBUG, javaAdapter } from './dap/java';
+import { pythonAdapter } from './dap/python';
 import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, type TestFramework } from './junit';
 import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
 import { parsePytestXml, pythonFor, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
@@ -564,7 +565,7 @@ app.whenReady().then(async () => {
       waitJdtReady: (t, s) => lsp.waitReady('java', t, s),
       jdkFor: async (cfg) => (cfg.javaHome ? await probeJdk(cfg.javaHome, 'launch config') : null) ?? jdkFor(needWs().root, 0),
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
-    }) },
+    }), python: pythonAdapter({ pythonFor }) },
   });
   const aiDir = path.join(app.getPath('userData'), 'ai');
   ai = new AiService({

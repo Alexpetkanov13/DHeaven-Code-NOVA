@@ -2,9 +2,10 @@ import path from 'node:path';
 import { DapConnection, DapError } from './connection';
 
 export interface LaunchConfig {
-  id: string; name: string; type: 'java'; request: 'launch' | 'attach';
+  id: string; name: string; type: 'java' | 'python'; request: 'launch' | 'attach';
   mainClass?: string; projectName?: string; args?: string; vmArgs?: string; env?: Record<string, string>; cwd?: string;
   javaHome?: string | null; preLaunchTask?: string; hostName?: string; port?: number;
+  program?: string; module?: string; justMyCode?: boolean;
 }
 export interface SourceBreakpoint { line: number; condition?: string; logMessage?: string; hitCondition?: string }
 export type DebugState = 'idle' | 'starting' | 'running' | 'stopped' | 'terminated';

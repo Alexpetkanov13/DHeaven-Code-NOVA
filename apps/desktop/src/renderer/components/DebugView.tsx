@@ -6,7 +6,9 @@ import type { DebugStore, Variable } from '../lib/debug';
 interface Props { store: DebugStore; trusted: boolean; hasWorkspace: boolean; onError(e: unknown): void; askInstall(info: { name: string; version: string; url: string; sizeHint: string; license: string; sha256: string }): void }
 type Jdk = { home: string; version: string; major: number };
 
-const newConfig = (): LaunchConfig => ({ id: `cfg-${Date.now()}`, name: 'Launch App', type: 'java', request: 'launch', mainClass: '', args: '', vmArgs: '', env: {}, cwd: '', javaHome: null, preLaunchTask: '' });
+const newConfig = (type: LaunchConfig['type'] = 'java'): LaunchConfig => (type === 'java'
+  ? { id: `cfg-${Date.now()}`, name: 'Launch App', type: 'java', request: 'launch', mainClass: '', args: '', vmArgs: '', env: {}, cwd: '', javaHome: null, preLaunchTask: '' }
+  : { id: `cfg-${Date.now()}`, name: 'Python: Current Module', type: 'python', request: 'launch', program: '', module: '', args: '', env: {}, cwd: '', justMyCode: true });
 const envToText = (e?: Record<string, string>) => Object.entries(e ?? {}).map(([k, v]) => `${k}=${v}`).join('\n');
 const textToEnv = (t: string) => Object.fromEntries(t.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1)]));
 
@@ -81,7 +83,7 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
   if (!hasWorkspace) return <div className="view"><div className="muted pad">Open a folder to debug.</div></div>;
   return (
     <div className="view debug" aria-label="Run and Debug">
-      {adapter && !adapter.installed && (
+      {adapter && !adapter.installed && draft?.type !== 'python' && (
         <div className="pad warn-box">
           {adapter.name} {adapter.version} is not installed. <button className="btn small" onClick={() => askInstall(adapter)}>Install…</button>
           {installMsg && <div className="muted">{installMsg}</div>}
@@ -99,8 +101,23 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
         {draft && (
           <div className="cfg-form">
             <label>Name<input aria-label="Config name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
+            <label>Type<select aria-label="Debugger type" value={draft.type} onChange={(e) => { const c = { ...newConfig(e.target.value as LaunchConfig['type']), id: draft.id }; setDraft(c); setEnvText(''); }}>
+              <option value="java">Java (java-debug)</option><option value="python">Python (debugpy)</option>
+            </select></label>
             <label>Request<select aria-label="Request" value={draft.request} onChange={(e) => setDraft({ ...draft, request: e.target.value as 'launch' | 'attach' })}><option value="launch">launch</option><option value="attach">attach</option></select></label>
-            {draft.request === 'launch' ? (<>
+            {draft.type === 'python' ? (draft.request === 'launch' ? (<>
+              <label>Program<input aria-label="Program" placeholder="script path, e.g. app/main.py" value={draft.program ?? ''} onChange={(e) => setDraft({ ...draft, program: e.target.value })} /></label>
+              <label>or Module<input aria-label="Module" placeholder="python -m …, e.g. app.main or pytest" value={draft.module ?? ''} onChange={(e) => setDraft({ ...draft, module: e.target.value })} /></label>
+              <label>Arguments<input aria-label="Program arguments" value={draft.args ?? ''} onChange={(e) => setDraft({ ...draft, args: e.target.value })} /></label>
+              <label>Env (KEY=VALUE per line)<textarea aria-label="Environment" rows={2} value={envText} onChange={(e) => setEnvText(e.target.value)} /></label>
+              <label>Working dir<input aria-label="Working directory" placeholder="(workspace root)" value={draft.cwd ?? ''} onChange={(e) => setDraft({ ...draft, cwd: e.target.value })} /></label>
+              <label className="check"><input type="checkbox" aria-label="Just my code" checked={draft.justMyCode ?? true} onChange={(e) => setDraft({ ...draft, justMyCode: e.target.checked })} /> Just my code</label>
+              <div className="muted small">Uses the workspace .venv / venv / env, else python on PATH. Needs debugpy: <code>python -m pip install debugpy</code>.</div>
+            </>) : (<>
+              <label>Host<input aria-label="Host" value={draft.hostName ?? '127.0.0.1'} onChange={(e) => setDraft({ ...draft, hostName: e.target.value })} /></label>
+              <label>Port<input aria-label="Port" type="number" value={draft.port ?? 5678} onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })} /></label>
+              <div className="muted small">Attach to <code>python -m debugpy --listen 5678 …</code></div>
+            </>)) : draft.request === 'launch' ? (<>
               <label>Main class<input aria-label="Main class" placeholder="(auto-detect)" value={draft.mainClass ?? ''} onChange={(e) => setDraft({ ...draft, mainClass: e.target.value })} /></label>
               <label>Program args<input aria-label="Program arguments" value={draft.args ?? ''} onChange={(e) => setDraft({ ...draft, args: e.target.value })} /></label>
               <label>VM args<input aria-label="VM arguments" value={draft.vmArgs ?? ''} onChange={(e) => setDraft({ ...draft, vmArgs: e.target.value })} /></label>
@@ -118,7 +135,7 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
         {!trusted && <div className="warn">Restricted Mode: debugging runs code, so it needs a trusted folder.</div>}
       </div>
       <div className="debug-toolbar" role="toolbar" aria-label="Debug toolbar">
-        <button className="btn small" disabled={!trusted || !draft || active || !adapter?.installed} onClick={() => void start()} title="Start Debugging (F5)">▶ Start</button>
+        <button className="btn small" disabled={!trusted || !draft || active || (draft.type === 'java' && !adapter?.installed)} onClick={() => void start()} title="Start Debugging (F5)">▶ Start</button>
         <button className="btn small" disabled={s.state !== 'stopped'} onClick={() => void store.control('continue')} title="Continue">Continue</button>
         <button className="btn small" disabled={s.state !== 'running'} onClick={() => void store.control('pause')} title="Pause">Pause</button>
         <button className="btn small" disabled={s.state !== 'stopped'} onClick={() => void store.control('next')} title="Step Over (F10)">Step Over</button>
@@ -133,7 +150,7 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
         <div aria-label="Threads">{st.threads.map((t) => <div key={t.id} className={`row-item${t.id === s.threadId ? ' on' : ''}`} onClick={() => void store.loadStack(t.id, true)}>{t.name}{t.id === s.threadId ? ` — paused (${s.reason})` : ''}</div>)}</div>
       </div>
       <div className="debug-section"><div className="sec-title">Call Stack</div>
-        <div aria-label="Call stack">{st.frames.map((f) => <div key={f.id} className={`row-item frame${f.id === st.frameId ? ' on' : ''}`} onClick={() => void store.selectFrame(f.id)}>{f.name} <span className="muted">{f.source?.name ?? ''}:{f.line}</span></div>)}</div>
+        <div aria-label="Call stack">{st.frames.map((f) => <div key={f.id} className={`row-item frame${f.id === st.frameId ? ' on' : ''}`} onClick={() => void store.selectFrame(f.id)}>{f.name} <span className="muted">{f.source?.name ?? f.source?.path?.split(/[\\/]/).pop() ?? ''}:{f.line}</span></div>)}</div>
       </div>
       <div className="debug-section"><div className="sec-title">Variables</div><Scopes store={store} frameId={s.state === 'stopped' ? st.frameId : null} /></div>
       <div className="debug-section"><div className="sec-title">Watch</div>
