@@ -67,8 +67,7 @@ jobs:
       - name: E2E (windows, Playwright Electron)
         if: runner.os == 'Windows'
         working-directory: apps/desktop
-        # Informational until the Windows E2E gaps (see DEVELOPMENT_PROGRESS.md) are closed; Linux E2E stays a hard gate.
-        continue-on-error: true
+        # Blocking (like Linux). kotlin-ls quality checks are best-effort annotations inside kotlin.spec; AI skips without Ollama.
         timeout-minutes: 50
         run: npx playwright test --reporter=line --global-timeout=2700000
       - name: Upload E2E results

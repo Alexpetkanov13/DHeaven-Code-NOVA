@@ -195,8 +195,22 @@ Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabr
   - `JAVA_HOME_<N>_X64` JDK discovery.
   - A race in the extension DENIED test.
   - The app's process tree is killed (`taskkill /T /F`) when `app.close()` hangs.
-- Windows E2E is **informational** (`continue-on-error`, 45-minute global timeout).
-  - Known gaps: debug, extension install/hang, java, kotlin, slice2 (terminal/git/explorer), test discovery/debug.
-  - The worker teardown hung because java/LSP children kept Electron alive.
-  - Passing on Windows: extension permissions, gradle, minecraft, tests (no-fail variant).
-  - Traces are uploaded as `e2e-results-windows-latest`.
+- Windows E2E is **blocking** again (since the commit that follows the Windows fixes below).
+  Diagnostic runs (`e2e-windows.yml`, workflow_dispatch with a spec filter):
+  - Full run 38373044498: 11 passed, 1 skipped (ai), 2 failed (debug Continue race; java launch fell over because of it).
+  - Run 38375265168 after the debug fix: debug + java passed.
+  - Earlier runs 38365992898 (slice2 + extensions: 4/4) and 38370952034 (debug, java, tests debug-attach passed).
+- Windows fixes:
+  - App: terminal default shell is PowerShell (pwsh if on PATH) instead of COMSPEC/cmd.exe; `NOVA_SHELL` override.
+  - App: 8 s hard quit deadline so lingering children cannot keep the app alive.
+  - App: transient EPERM/EBUSY retries on rename/rm (extension install, atomic writes, explorer delete/rename, LSP installer).
+  - App: `vscode.java.resolveMainClass` gets a file URI instead of a raw `C:\` path (was "Illegal character in opaque part").
+  - App: `startDebugSession` is retried when JDT LS cancels it during a project build.
+  - App: JUnit results older than the run are ignored if a locked result file survives the clear.
+  - Test: PowerShell syntax for the terminal command on Windows.
+  - Test: every launched app is closed/killed in afterEach; on Windows CI, leftover JVMs (Gradle daemons/debuggees that inherit Electron's stdio handles) are killed after each spec file. This removed the 180 s worker-teardown errors.
+  - Test: debug spec re-issues Continue if java-debug drops it while settling after Step Out.
+- Remaining Windows gaps:
+  - kotlin-ls does not resolve the Kotlin stdlib (upstream; best-effort, annotated).
+  - The debug Continue-after-Step-Out race is handled in the test, not in the app.
+  - Code signing: none.
