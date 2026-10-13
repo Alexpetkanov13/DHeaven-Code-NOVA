@@ -245,3 +245,19 @@ Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabr
   - Linux: the terminals spec failed because of reordered keystrokes; fixed in f58715b (writes serialized).
   - Windows: failed on the E2E flakes above.
 - **Windows E2E is currently NOT reliably green.** The step stays blocking, so CI is red until the debug Continue race and the tests run-one flake are fixed.
+
+### Windows flakes: root causes (e876d74 / 08a69c6)
+- **Tests "run one" (Exit 1, no output).**
+  - Root cause, in the app (TestsView): the previous run's `done`/exit code stayed on screen until `tests.run.v1` returned the new run id. Gradle output that arrived before that id was dropped.
+  - So "Exit 1" was the *previous* (rerun-failed) run, and the empty output was the new run's dropped early output. Slow IPC on Windows widened the window.
+  - Fix: a new run is marked started synchronously, and early output/done are buffered and replayed.
+- **Debug Continue / call stack.** A DAP trace (`NOVA_DAP_TRACE=<dir>`, uploaded with the E2E results) showed this was a wrong assumption in the test.
+  - greet() is a single statement, so Step Over already returns to App.main. The following Step Out then left main into JDK `Thread.exit`, which happened deterministically on JDK 25 locally.
+  - The spec now does Step Out (back to App.main), then Step Over over the println, then Continue.
+  - The earlier app fix (no Continue while a step is in flight) stays.
+  - The trace also showed java-debug sometimes sends `terminated` without `exited`. The app now logs that the adapter did not report an exit code, instead of omitting the line.
+- Windows diagnostic full E2E on e876d74:
+  - 38395227462: 15/15 passed (ai skipped).
+  - 38395239705: 15/15 passed (ai skipped).
+  - 38395215112: 12/15. debug failed (the missing `exited`, handled in 08a69c6). Two `firstWindow` 30 s timeouts in tests.spec, cause not yet known.
+- CI 38395026239 (e876d74): ubuntu success, windows success. Release 38395026440: success.
