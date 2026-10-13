@@ -1,6 +1,21 @@
 import { EventEmitter } from 'node:events';
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 import { FrameDecoder, encodeFrame } from '../lsp/jsonrpc';
+
+/**
+ * NOVA_DAP_TRACE=<dir>: append every DAP message (both directions, timestamped) to <dir>/dap-<pid>-<n>.log.
+ * Diagnostics only (CI artifacts); variable values and evaluate results are truncated per message.
+ */
+let traceSeq = 0;
+function openTrace(): ((dir: '>>' | '<<', m: unknown) => void) | null {
+  const dir = process.env.NOVA_DAP_TRACE; if (!dir) return null;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { return null; }
+  const file = path.join(dir, `dap-${process.pid}-${++traceSeq}.log`);
+  const t0 = Date.now();
+  return (d, m) => { try { fs.appendFileSync(file, `${String(Date.now() - t0).padStart(7)}ms ${d} ${JSON.stringify(m).slice(0, 2000)}\n`); } catch { /* ignore */ } };
+}
 
 export class DapError extends Error { constructor(public command: string, message: string) { super(message); } }
 type Pending = { resolve(v: unknown): void; reject(e: Error): void; timer: NodeJS.Timeout; command: string };
@@ -14,6 +29,7 @@ export class DapConnection extends EventEmitter {
   private seq = 1;
   private pending = new Map<number, Pending>();
   closed = false;
+  private trace = openTrace();
   constructor(private stream: NodeJS.ReadWriteStream & { destroy?(): void }, private onReverse: (command: string, args: unknown) => unknown = () => { throw new Error('unsupported'); }) {
     super();
     const dec = new FrameDecoder((m) => this.onMessage(m as DapMsg));
@@ -30,7 +46,7 @@ export class DapConnection extends EventEmitter {
       s.once('error', (e) => { clearTimeout(t); rej(e); });
     });
   }
-  private write(m: object) { if (!this.closed) this.stream.write(encodeFrame(m)); }
+  private write(m: object) { if (!this.closed) { this.trace?.('>>', m); this.stream.write(encodeFrame(m)); } }
   request<T = unknown>(command: string, args?: unknown, timeoutMs = 30_000): Promise<T> {
     if (this.closed) return Promise.reject(new DapError(command, 'debug adapter is not connected'));
     const seq = this.seq++;
@@ -41,6 +57,7 @@ export class DapConnection extends EventEmitter {
     });
   }
   private onMessage(m: DapMsg) {
+    this.trace?.('<<', m);
     if (m.type === 'response') {
       const p = this.pending.get(m.request_seq!); if (!p) return; // stale (timed out / cancelled)
       this.pending.delete(m.request_seq!); clearTimeout(p.timer);
