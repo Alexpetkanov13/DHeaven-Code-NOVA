@@ -11,6 +11,7 @@ jobs:
     env:
       NOVA_SERVERS_DIR: ${{ github.workspace }}/.nova-servers
       NOVA_E2E_NO_SANDBOX: '1'
+      NOVA_STARTUP_LOG: ${{ github.workspace }}/apps/desktop/test-results/startup
       NOVA_DAP_TRACE: ${{ github.workspace }}/apps/desktop/test-results/dap-trace
     steps:
       - uses: actions/checkout@v4

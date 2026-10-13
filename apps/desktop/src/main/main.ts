@@ -1,3 +1,4 @@
+import fsSync from 'node:fs';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -429,7 +430,7 @@ async function createWindow() {
       webviewTag: false, spellcheck: false,
     },
   });
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => { phase('ready-to-show'); win?.show(); });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -438,7 +439,20 @@ async function createWindow() {
   await win.loadURL(devUrl ?? 'nova://app/index.html');
 }
 
+// NOVA_STARTUP_LOG=<dir>: per-launch startup phase timings (ms since process start) for diagnosing slow window opens.
+const startupLog = (() => {
+  const dir = process.env.NOVA_STARTUP_LOG; if (!dir) return null;
+  try { fsSync.mkdirSync(dir, { recursive: true }); } catch { return null; }
+  return path.join(dir, `startup-${process.pid}-${Date.now()}.log`);
+})();
+function phase(name: string) {
+  if (!startupLog) return;
+  try { fsSync.appendFileSync(startupLog, `${String(Math.round(performance.now())).padStart(7)}ms ${name}\n`); } catch { /* ignore */ }
+}
+phase('main module loaded');
+
 app.whenReady().then(async () => {
+  phase('app ready');
   store = new Store(app.getPath('userData'));
   trust = new TrustStore(app.getPath('userData'));
   wsSettings = new WorkspaceSettingsStore(app.getPath('userData'));
@@ -453,6 +467,7 @@ app.whenReady().then(async () => {
     emit('daemon.status.v1', message ? { state, message } : { state });
   });
   daemon.start();
+  phase('daemon spawned');
   lsp = new LspManager({
     serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
     isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
@@ -477,9 +492,12 @@ app.whenReady().then(async () => {
     fetch: (u, i) => (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/.test(String(u)) ? globalThis.fetch(u, i) : net.fetch(String(u), i as RequestInit)), emit: (n, p) => emit(n as EventName, p as never),
     requestLog: process.env.NOVA_AI_REQUEST_LOG ? path.resolve(process.env.NOVA_AI_REQUEST_LOG) : null,
   });
+  phase('services constructed');
   extStore = new ExtensionStore(extDir(), app.getVersion());
   await extStore.load();
+  phase('extension store loaded');
   await installBundled(extStore, bundledDir(), (m) => console.log(`[ext] ${m}`));
+  phase('bundled extensions installed');
   templates = new TemplateService({
     fetch: (u) => net.fetch(u),
     templates: async () => (await extStore.list()).filter((x) => x.entry.enabled).flatMap((x) => x.manifest.contributes.projectTemplates.map((t) => ({
@@ -513,7 +531,9 @@ app.whenReady().then(async () => {
     return new Response(res.body, { status: res.status, headers });
   });
   buildMenu();
+  phase('creating window');
   await createWindow();
+  phase('window loaded');
 });
 app.on('window-all-closed', () => {
   // Hard deadline: a child that ignores shutdown (e.g. a JVM on Windows holding handles) must never keep the app alive.
