@@ -1,6 +1,39 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers. CI runs unit + E2E on Linux and Windows.
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test runs. CI runs unit + E2E on Linux and Windows.
+
+## Testing view: pytest and cargo test (2026-10-13, ADR-0019)
+- **Frameworks** (`main/testing/`): `gradle` (unchanged), `pytest`, `cargo`. Nodes and results carry `framework`; ids are the tool's own names (pytest node ids, libtest `module::fn`), so reruns pass them straight back.
+- **Discovery is a static source scan** (nothing executes, so it works in Restricted Mode).
+  - pytest: `test_*` functions and `Test*` methods in `test_*.py` / `*_test.py`.
+  - Rust: `#[test]` / `#[…::test]` functions, with module paths from the file layout plus inline `mod` blocks; comments and strings are skipped.
+- **Results from the tools themselves:**
+  - pytest `--junitxml` (xunit1, so file and node id map back; `junit_logging=out-err` for captured output; `--color=no`).
+  - libtest's stable text output (status lines; `---- X stdout ----` sections with `--show-output`; panic message and stack split out). No per-test durations, so `timeMs: null` instead of a fake 0.
+- **`tests.run.v1` takes `targets: [{framework, filters}]`;** `[]` means every detected framework, run one after another as one cancellable run. Filters may not start with `-`; Gradle keeps its strict alphabet.
+- **Python interpreter:** workspace `.venv`/`venv`/`env`, else `python3` (`python` on Windows). The run output names it. A missing pytest is reported as such.
+- **UI:**
+  - A framework badge per file.
+  - Parametrized results roll up into the function node, and the details pane lists every variant.
+  - Cargo groups run their leaves with `--exact`.
+  - Debug (🐞) is offered for JUnit only.
+- **Fixtures:**
+  - `fixtures/python/tests/test_greeter.py`: pass, 2 parametrized, skip, class tests, and a failure gated by `NOVA_DEMO_FAIL=1`.
+  - `fixtures/rust-cargo` `greeter::tests`: pass with stdout, ignored with reason, and a failure gated by the same variable.
+- **Cleanup:** `fixtures/python/app/__pycache__/*.pyc` had been committed by accident in `363b41e`; removed, and `__pycache__/` / `.pytest_cache/` are now ignored.
+- **CI:** `actions/setup-python` 3.12 + `pytest==8.4.2` on both OSes.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint | `tsc`, `eslint src e2e` | PASS |
+| Unit | `vitest run` (desktop) | PASS 121 (+3 skipped). New `testing.test.ts` parses **real captured output** (`__data__/pytest.xml` from pytest 8.4.2, `__data__/cargo-output.txt` from rustc 1.97) plus static scans of the fixtures; `testTargets.test.ts` covers filters/minimize/aggregation/running marker |
+| E2E | `xvfb-run -a npx playwright test e2e/testing-langs.spec.ts` (pytest 8.4.2, cargo 1.97) | PASS 2/2. **pytest:** discovery; Run All → 4 passed / 1 failed / 1 skipped; params roll up; failure message in details; captured `greeting NOVA`; Rerun Failed passes only that node id; single test → Exit 0. **cargo:** discovery; Run All → 2/1/1, Exit 101; panic message + `panicked at src/greeter.rs:39`; `--show-output` stdout; ignore reason; Rerun Failed → `--exact greeter::tests::deliberate_failure`; single test → Exit 0 |
+| Windows | CI | pending (next push) |
+
+## CI round 1 on PR #1 (`363b41e`) and fixes
+- **Linux and Windows: 21 passed, 1 skipped (ai), 1 failed.** The failure was the missing-server test. The TS/Python/Rust language tests passed on **both** OSes, including the Windows `.cmd` → `cmd.exe` launch of typescript-language-server.
+- **Root cause (product):** npm-installed servers are `#!/usr/bin/env node` shims, and with a reduced PATH (as when a GUI app is launched) node isn't found, so the server crash-loops. Fix `486e793`: external servers start with their own directory first on PATH (npm/nvm/fnm/Volta put node there). Reproduced locally with npm Pyright under `PATH=/usr/bin:/bin`; passes after the fix.
+- **Root cause (test, Windows):** setup-node puts npm's `.cmd` shims in `C:\npm\prefix`, away from `node.exe`, and the test had removed node from PATH, which no real session does. Fix `96dca91`: the test keeps node's directory unless it contains the server itself. Verified with npm Pyright first and with the pip wrapper first on PATH.
 
 ## External language servers: TypeScript/JavaScript, Python, Rust (2026-10-13, ADR-0018)
 Session start audit: existing repo, HEAD `a41d40c`, CI green on ubuntu + windows for that commit. Locally on a fresh container: `cargo build --release`, `pnpm typecheck`, `pnpm lint`, `pnpm test` all PASS (desktop 97 + 2 skipped). The last three commits before this session (Quick Open / Go to Symbol / breadcrumbs / back-forward `5b2bf6d`, split editors up to 4 groups `61b11e6`, session restore / hot exit `a41d40c`) had E2E specs (`navigation`, `split`, `session`) but no entry here; they are covered by the full-suite run below.
@@ -28,20 +61,20 @@ Box provisioning for this session (outside the repo): typescript-language-server
 | New unit tests | `discover.test.ts`, `lsp.test.ts`, `session.test.ts` | PATH vs extra dirs, non-executable skipped, first name wins; probe success / non-zero exit with stderr / hang timeout, paths with spaces; manager: missing → `blocked` with setup guidance, no pid, `download: null`; broken probe → reason names path + error; configured path wins (PATH not searched), re-detect after fix → ready with probed version, `.tsx` sent as `typescriptreact`; Windows-only `.cmd` quoting/refusal (runs on Windows CI only); progress text begin/report/end; renderer settings patch cannot set `lspServerPaths` |
 | **Languages E2E (real servers)** | `PATH=…tsls…:~/.local/bin:~/.cargo/bin NOVA_E2E_NO_SANDBOX=1 xvfb-run -a npx playwright test e2e/languages.spec.ts` | PASS 4/4. **TS:** tsls ready "found on PATH"; `greet(42)` in main.ts → Problems *Argument of type 'number' is not assignable to parameter of type 'string'* (cross-file, from the server); Problems has no *Cannot find module* (worker off); completion `greetAll`; F12 on `Greeter` → greeter.ts (single result). **Python:** Pyright → *cannot be assigned to parameter "name"*, completion `greet_all`, F12 → app/greeter.py. **Rust:** ready, waits for indexing progress to clear, F12 → src/greeter.rs, completion `greet_all`, `let broken: i32 = "oops"` + save → *mismatched types* (rustc via cargo check). **Missing server:** PATH=/usr/bin:/bin, HOME empty → pyright `blocked`, *Not found on PATH*, setup shows `pipx install pyright`, no Install button, no pid, editor still editable; Choose Executable… → "chosen by you" → Start → ready; `settings.json` has the path; Use PATH → not found again |
 | All E2E | `NOVA_SERVERS_DIR=~/nova-servers … xvfb-run -a npx playwright test` | PASS: 22 passed, 1 skipped (ai, no Ollama), 7.8 min, all servers on PATH (so TS fixtures in the older specs also ran with tsls active) |
-| Windows | CI (`ci.yml`) | NOT RUN in this session (pushed to the feature branch; `ci.yml` triggers on push to `main` and on PRs) |
+| Windows | CI on PR #1 | See "CI round 1" above: everything but the missing-server test passed on the first run; fixed in `486e793` / `96dca91` |
 
 Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-lsp-setup.png` (session scratchpad, not committed).
 
 ### Limitations
 - No Python interpreter/venv picker (Pyright uses PATH python or its own config); Pyright has no formatter.
-- No DAP or test explorer for TS/Python/Rust.
+- No DAP for TS/Python/Rust (tests: pytest and cargo test since ADR-0019; no JS runners).
 - Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
 - Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
 - The TS gate relies on Monaco internals (`tsMode.js` `Adapter` export); re-check on Monaco upgrades. The E2E's "no *Cannot find module*" assertion guards it.
 - Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
 
 ### Next slice (by dependency/value)
-1. Run/test/debug for the new languages. Test explorer adapters for `cargo test`, pytest and vitest/jest/node:test (parse real reporter output). DAP: debugpy (Python), Node's built-in inspector via js-debug, and CodeLLDB (Rust). The DAP layer is already generic (ADR-0014).
+1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: vitest/jest/node:test, and DAP for debugpy (Python), js-debug (Node) and CodeLLDB (Rust). The DAP layer is already generic (ADR-0014).
 2. Python interpreter/venv picker (discover `.venv`, `venv`, conda, PATH), passed to Pyright via `workspace/configuration` (`python.pythonPath`) and to run/test/debug.
 3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
 4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).

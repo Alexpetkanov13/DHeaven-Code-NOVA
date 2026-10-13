@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="6" time="0.038" timestamp="2026-10-13T00:00:00" hostname="h"><testcase classname="tests.test_greeter" name="test_greets_by_name" file="tests/test_greeter.py" line="7" time="0.001"><system-out>--------------------------------- Captured Out ---------------------------------
+greeting NOVA
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="tests.test_greeter" name="test_greets_each[Java]" file="tests/test_greeter.py" line="12" time="0.001"><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="tests.test_greeter" name="test_greets_each[Rust]" file="tests/test_greeter.py" line="12" time="0.000"><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="tests.test_greeter" name="test_not_yet" file="tests/test_greeter.py" line="17" time="0.000"><skipped type="pytest.skip" message="not implemented yet">/w/tests/test_greeter.py:18: not implemented yet</skipped><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="tests.test_greeter.TestGreeter" name="test_prefix" file="tests/test_greeter.py" line="23" time="0.000"><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="tests.test_greeter.TestGreeter" name="test_deliberate_failure" file="tests/test_greeter.py" line="26" time="0.001"><failure message="AssertionError: assert 'Hello, NOVA?' == 'Hello, NOVA!'&#10;  &#10;  - Hello, NOVA!&#10;  ?            ^&#10;  + Hello, NOVA?&#10;  ?            ^">self = &lt;tests.test_greeter.TestGreeter object&gt;
+
+    @pytest.mark.skipif(os.environ.get("NOVA_DEMO_FAIL") != "1", reason="set NOVA_DEMO_FAIL=1 to see a failure")
+    def test_deliberate_failure(self):
+&gt;       assert greet("NOVA", "?") == "Hello, NOVA!"
+E       AssertionError: assert 'Hello, NOVA?' == 'Hello, NOVA!'
+E         
+E         - Hello, NOVA!
+E         ?            ^
+E         + Hello, NOVA?
+E         ?            ^
+
+tests/test_greeter.py:29: AssertionError</failure><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase></testsuite></testsuites>

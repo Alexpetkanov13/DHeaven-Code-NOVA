@@ -20,7 +20,10 @@ import type { ChildProcess } from 'node:child_process';
 import { detectGradle, killRun, listTasks, runGradle, stopGradleDaemons } from './gradle';
 import { DebugManager } from './dap/manager';
 import { JAVA_DEBUG, javaAdapter } from './dap/java';
-import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
+import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, type TestFramework } from './junit';
+import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
+import { parsePytestXml, pythonFor, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
+import { cargoArgs, parseCargoOutput } from './testing/cargo';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 import { detectProfiles, pickProfile } from './terminalProfiles';
@@ -101,6 +104,39 @@ const gradleKilled = new Set<number>();
 let gradleSeq = 0;
 let dbg!: DebugManager;
 const testRuns = new Map<number, ChildProcess>();
+/** One framework's part of a test run; output is streamed as tests.output.v1, results come from the tool's report. */
+async function runTestTarget(root: string, runId: number, framework: TestFramework, filters: string[], debug: boolean): Promise<{ code: number | null; results: TestCase[]; error: string | null }> {
+  const out = (data: string) => emit('tests.output.v1', { runId, data });
+  const echo = (cmd: string, args: string[]) => out(`> ${cmd} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\n`);
+  if (framework === 'gradle') {
+    const info = await detectGradle(root); const env = await gradleEnv(root);
+    const startedAt = Date.now();
+    await clearResults(root);
+    const args = testArgs(filters, debug);
+    echo('gradle', args);
+    let tail = ''; let announced = false;
+    const code = await new Promise<number | null>((resolve) => testRuns.set(runId, runGradle(root, info, args, env, (data) => {
+      out(data);
+      if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
+    }, (c) => resolve(c))));
+    try { return { code, results: await readResults(root, startedAt), error: null }; }
+    catch (e) { return { code, results: [], error: String(e) }; }
+  }
+  if (framework === 'pytest') {
+    const py = await pythonFor(root); const xml = pytestXmlPath(runId); const args = pytestArgs(root, filters, xml);
+    await fs.rm(xml, { force: true });
+    out(`# Python: ${py.command} (${py.source})\n`); echo(py.command, args);
+    const r = await new Promise<{ code: number | null; output: string }>((resolve) => testRuns.set(runId, spawnTool(py.command, args, root, { ...process.env, PYTHONUNBUFFERED: '1' }, out, (c, o) => resolve({ code: c, output: o }))));
+    const xmlText = await fs.readFile(xml, 'utf8').catch(() => null);
+    await fs.rm(xml, { force: true });
+    return { code: r.code, results: xmlText ? parsePytestXml(xmlText) : [], error: xmlText ? null : pytestMissing(r.output, py.command) ?? (r.code === 5 ? 'pytest collected no tests' : null) };
+  }
+  const args = await cargoArgs(root, filters);
+  echo('cargo', args);
+  const r = await new Promise<{ code: number | null; output: string }>((resolve) => testRuns.set(runId, spawnTool('cargo', args, root, { ...process.env, CARGO_TERM_COLOR: 'never' }, out, (c, o) => resolve({ code: c, output: o }))));
+  const results = parseCargoOutput(r.output);
+  return { code: r.code, results, error: results.length || r.code === 0 ? null : /No such file|not found|ENOENT/.test(r.output) && /Failed to start/.test(r.output) ? 'cargo was not found on PATH (install Rust from https://rustup.rs)' : null };
+}
 /** Runs a gradle command to completion (pre-launch tasks); abortable (kills the process tree). */
 async function gradleOnce(root: string, args: string[], log: (s: string) => void, signal: AbortSignal): Promise<number | null> {
   const info = await detectGradle(root);
@@ -324,23 +360,26 @@ const handlers: Handlers = {
       .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
     return null;
   },
-  'tests.discover.v1': async () => discoverTests(needWs().root),
-  'tests.run.v1': async ({ filters, debug }) => {
-    const root = (await requireTrust()).root; const info = await detectGradle(root);
-    if (!info.isGradle) throw new AppError('NOT_FOUND', 'Test runs need a Gradle project');
+  'tests.discover.v1': async () => discoverAllTests(needWs().root),
+  'tests.run.v1': async ({ targets, debug }) => {
+    const root = (await requireTrust()).root;
+    const plan = targets.length ? targets : frameworksOf(await discoverAllTests(root)).map((framework) => ({ framework, filters: [] as string[] }));
+    if (!plan.length) throw new AppError('NOT_FOUND', 'No tests found (JUnit under src/test, pytest test_*.py files, or Rust #[test] functions)');
+    if (debug && plan.some((t) => t.framework !== 'gradle')) throw new AppError('INVALID_REQUEST', 'Debugging a test is supported for Gradle/JUnit tests only');
+    for (const t of plan) if (t.framework === 'gradle' && t.filters.some((f) => !GRADLE_FILTER.test(f))) throw new AppError('INVALID_REQUEST', 'Invalid Gradle test filter');
+    if (plan.some((t) => t.framework === 'gradle') && !(await detectGradle(root)).isGradle) throw new AppError('NOT_FOUND', 'JUnit test runs need a Gradle project');
     const runId = ++gradleSeq;
-    const startedAt = Date.now();
-    await clearResults(root);
-    let tail = ''; let announced = false;
-    const p = runGradle(root, info, testArgs(filters, !!debug), await gradleEnv(root), (data) => {
-      emit('tests.output.v1', { runId, data });
-      if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
-    }, (code) => {
+    void (async () => {
+      const results: TestCase[] = []; const errors: string[] = []; let code: number | null = 0;
+      for (const t of plan) {
+        if (gradleKilled.has(runId)) break;
+        const r = await runTestTarget(root, runId, t.framework, t.filters, !!debug);
+        results.push(...r.results); if (r.error) errors.push(r.error);
+        if (r.code !== 0 && code === 0) code = r.code;
+      }
       const killed = gradleKilled.delete(runId); testRuns.delete(runId);
-      void readResults(root, startedAt).then((results) => emit('tests.done.v1', { runId, code, killed, results, error: null, debugPort: null }))
-        .catch((e) => emit('tests.done.v1', { runId, code, killed, results: [], error: String(e), debugPort: null }));
-    });
-    testRuns.set(runId, p);
+      emit('tests.done.v1', { runId, code, killed, results, error: errors.join('\n') || null, debugPort: null });
+    })();
     return { runId };
   },
   'tests.cancel.v1': async ({ runId }) => { const p = testRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },

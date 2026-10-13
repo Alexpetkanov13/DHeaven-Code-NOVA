@@ -35,6 +35,8 @@ jobs:
           java-version: |
             25
             21
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install
@@ -59,11 +61,12 @@ jobs:
       - name: Provision language servers (pinned URLs + SHA-256)
         working-directory: apps/desktop
         run: node scripts/provision-servers.mjs "${{ env.NOVA_SERVERS_DIR }}"
-      - name: External language servers (user-installed path, pinned versions)
-        # NOVA never installs these; CI installs them the way a user would so languages.spec runs for real.
+      - name: External language servers + pytest (user-installed path, pinned versions)
+        # NOVA never installs these; CI installs them the way a user would so languages.spec and testing-langs.spec run for real.
         shell: bash
         run: |
           npm install -g typescript-language-server@6.0.2 typescript@5.9.3 pyright@1.1.414
+          python -m pip install pytest==8.4.2
           rustup component add rust-analyzer
           typescript-language-server --version
           rust-analyzer --version

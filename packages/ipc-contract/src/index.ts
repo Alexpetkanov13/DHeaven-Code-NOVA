@@ -167,9 +167,12 @@ export const DebugStatus = z.object({
 });
 export type DebugStatus = z.infer<typeof DebugStatus>;
 export const DAP_COMMANDS = ['threads', 'stackTrace', 'scopes', 'variables', 'continue', 'next', 'stepIn', 'stepOut', 'pause', 'evaluate', 'source', 'setVariable', 'exceptionInfo'] as const;
-export const TestCase = z.object({ id: z.string(), name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
+export const TestFramework = z.enum(['gradle', 'pytest', 'cargo']);
+export type TestFramework = z.infer<typeof TestFramework>;
+export const TestCase = z.object({ id: z.string(), framework: TestFramework, name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number().nullable(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
 export type TestCase = z.infer<typeof TestCase>;
-export const TestNode = z.object({ id: z.string(), className: z.string(), method: z.string().nullable(), rel: z.string(), line: z.number() });
+/** id: the framework's own test name (Gradle `pkg.Class.method`, pytest node id `file::Class::test`, libtest `mod::test`). */
+export const TestNode = z.object({ id: z.string(), framework: TestFramework, label: z.string(), className: z.string(), method: z.string().nullable(), rel: z.string(), line: z.number() });
 export type TestNode = z.infer<typeof TestNode>;
 const VerifiedBp = z.object({ line: z.number(), verified: z.boolean(), message: z.string().optional() });
 
@@ -260,7 +263,11 @@ export const channels = {
   'debug.adapter.v1': def(z.object({}), z.object({ installed: z.boolean(), name: z.string(), version: z.string(), url: z.string(), sizeHint: z.string(), license: z.string(), sha256: z.string() })),
   'debug.install.v1': def(z.object({ consent: z.literal(true) }), z.null()),
   'tests.discover.v1': def(z.object({}), z.array(TestNode)),
-  'tests.run.v1': def(z.object({ filters: z.array(z.string().max(1000).regex(/^[A-Za-z0-9_$.*]+$/)).max(500), debug: z.boolean().optional() }), z.object({ runId: z.number() })),
+  /** targets: [] = every framework detected in the workspace. Filters are passed as separate argv entries (never a shell); a leading '-' is refused so a filter can't become an option. */
+  'tests.run.v1': def(z.object({
+    targets: z.array(z.object({ framework: TestFramework, filters: z.array(z.string().min(1).max(1000).regex(/^[^-\s][^\r\n\0]*$/)).max(500) })).max(3),
+    debug: z.boolean().optional(),
+  }), z.object({ runId: z.number() })),
   'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'ai.getConfig.v1': def(z.object({}), z.custom<AiConfigInfo>()),
