@@ -74,7 +74,7 @@ describe('generation', () => {
     const f = await s.generate({ key: 'dheaven.minecraft-dev/fabric-mod', options: opts, minecraft: '26.3', parentDir: parent, folderName: 'fab' });
     expect(f.files).toEqual(expect.arrayContaining(['gradlew', 'gradle/wrapper/gradle-wrapper.jar', '.gitignore', 'src/main/java/com/example/testmod/TestMod.java', 'src/client/java/com/example/testmod/client/TestModClient.java']));
     expect(await fs.readFile(path.join(f.root, 'gradle.properties'), 'utf8')).toMatch(/minecraft_version=26\.3[\s\S]*fabric_api_version=0\.162\.0\+26\.3/);
-    expect((await fs.stat(path.join(f.root, 'gradlew'))).mode & 0o111).toBeTruthy();
+    if (process.platform !== 'win32') expect((await fs.stat(path.join(f.root, 'gradlew'))).mode & 0o111).toBeTruthy(); // no exec bits on Windows
     expect(JSON.parse(await fs.readFile(path.join(f.root, 'src/main/resources/fabric.mod.json'), 'utf8')).depends.java).toBe('>=25');
     const p = await s.generate({ key: 'dheaven.minecraft-dev/paper-plugin', options: { ...opts, modId: 'testplugin' }, minecraft: '1.21.11', parentDir: parent, folderName: 'pap' });
     expect(await fs.readFile(path.join(p.root, 'build.gradle.kts'), 'utf8')).toMatch(/paper-api:1\.21\.11-R0\.1-SNAPSHOT[\s\S]*release\.set\(21\)[\s\S]*minecraftVersion\("1\.21\.11"\)/);

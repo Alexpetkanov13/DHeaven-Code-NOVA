@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -73,7 +73,8 @@ describe('extension host + service (real host process)', () => {
     const d = await setup({ answer: 'denied', remember: false });
     await d.install(path.join(fixtures, 'net-peeker'));
     await expect(d.svc.executeCommand('peek.readme')).rejects.toThrow(/denied by the user/);
-    expect(outputText(d.events, 'Peek')).toContain('DENIED');
+    // the output notification and the command rejection travel separately from the host; wait for the output
+    await vi.waitFor(() => expect(outputText(d.events, 'Peek')).toContain('DENIED'), { timeout: 5000 });
     expect(d.store.get('nova-tests.net-peeker')!.grants).toEqual({});
     await d.svc.stopAll();
   }, 60_000);

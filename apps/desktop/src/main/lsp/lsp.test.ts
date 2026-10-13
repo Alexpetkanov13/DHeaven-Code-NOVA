@@ -35,7 +35,7 @@ describe('uri normalization', () => {
     expect(canonicalUri('jdt://contents/x')).toBe('jdt://contents/x');
   });
   it('round-trips through server form and maps nested + key URIs', () => {
-    const u = fileUri('/tmp/p/Main.java');
+    const u = fileUri(path.resolve('/tmp/p/Main.java')); // absolute on every OS (D:\\tmp\\... on Windows)
     expect(canonicalUri(serverUri(u))).toBe(u);
     expect(mapUris({ changes: { [u]: [{ uri: u }] }, n: 1 }, () => 'X')).toEqual({ changes: { X: [{ uri: 'X' }] }, n: 1 });
   });
