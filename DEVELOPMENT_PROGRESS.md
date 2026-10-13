@@ -214,3 +214,23 @@ Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabr
   - kotlin-ls does not resolve the Kotlin stdlib (upstream; best-effort, annotated).
   - The debug Continue-after-Step-Out race is handled in the test, not in the app.
   - Code signing: none.
+
+## Hardening, terminals, Git (Oct 13)
+
+- **Debug (app):** DebugManager marks the session `running` as soon as the adapter accepts continue/next/stepIn/stepOut, until the next `stopped` event. Execution commands are refused while not paused. This replaces the e2e "re-click Continue" workaround: java-debug sent a step's response before its stop and no `continued` event, so a Continue issued in between was dropped. Unit test: `dap.test.ts` "execution control".
+- **Gradle daemons:** NOVA records the projects where it ran Gradle. On quit and on workspace switch it runs `gradlew --stop` (or `gradle --stop`) per project, each bounded to 6 s (killed after). Unit test with a fake wrapper.
+- **Terminals:** multiple tabs, each splittable into two panes; per-pane Kill; profile picker.
+  - Windows profiles: PowerShell 7 / Windows PowerShell / Command Prompt / Git Bash.
+  - Unix profiles: `$SHELL` / bash / zsh / fish / sh.
+  - The executable is resolved in main from a profile id, so the renderer cannot pick an arbitrary binary.
+  - The choice is persisted as `settings.terminalProfile`.
+  - Tests: `terminalProfiles.test.ts`, `e2e/terminals.spec.ts`.
+- **Git** (git CLI from main, `src/main/git.ts`):
+  - Branch list, create, and switch. A dirty tracked tree asks for confirmation; local or remote-tracking branches are both supported.
+  - Discard with confirmation: restore from HEAD, unstage and delete new files, delete untracked files; paths are guarded.
+  - fetch --prune / pull --ff-only / push, with `-u origin <branch>` when there is no upstream.
+  - Ahead/behind shown in the SCM view and the status bar.
+  - Uses the user's own config and credential helper. `GIT_TERMINAL_PROMPT=0` and no askpass, so it never prompts or hangs. All output and errors are redacted (URL userinfo, auth headers, GitHub/GitLab tokens, token query params).
+  - Every new channel is trust-gated (hooks and credential helpers execute).
+  - Tests: `git.test.ts` (bare remote, two clones, redaction) and `e2e/git.spec.ts` (local bare remote; push, fetch, pull, dirty switch, discard).
+- Screenshots: `/workspace/nova-terminals.png`, `/workspace/nova-git-branches.png`.
