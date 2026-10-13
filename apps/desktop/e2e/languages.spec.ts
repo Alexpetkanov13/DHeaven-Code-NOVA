@@ -159,7 +159,12 @@ test('missing server: setup guidance, nothing spawned, then Choose Executable…
   test.skip(!pyright, 'needs pyright-langserver to finish the flow');
   // PATH and HOME without the server: NOVA must report "not found" and show the install commands.
   const empty = path.join(os.tmpdir(), 'nova-empty-home');
-  const bare = isWin ? `${process.env.SystemRoot}\\System32` : '/usr/bin:/bin';
+  // node stays reachable (a system-wide Node install is on PATH for GUI apps) unless the server lives in node's own
+  // directory (setup-node/nvm layout): then that directory must stay off PATH, and NOVA's exe-dir-on-PATH launch
+  // provides node.
+  const nodeDir = path.dirname(process.execPath);
+  const keepNode = ['', '.cmd', '.exe'].some((e) => fs.existsSync(path.join(nodeDir, 'pyright-langserver' + e))) ? [] : [nodeDir];
+  const bare = [...(isWin ? [`${process.env.SystemRoot}\\System32`] : ['/usr/bin', '/bin']), ...keepNode].join(path.delimiter);
   const { app, page, tmp } = await launch('python', { PATH: bare, Path: bare, HOME: empty, USERPROFILE: empty, APPDATA: empty });
   await openRel(page, 'app/main.py');
   await page.getByRole('button', { name: 'Language Servers' }).click();
