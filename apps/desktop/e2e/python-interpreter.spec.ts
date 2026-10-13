@@ -31,8 +31,9 @@ async function openRel(page: Page, rel: string) {
 test('interpreter choice drives pytest runs, the debugger and Pyright', async () => {
   test.skip(!sys, `${python} with pytest is needed`);
   const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'nova-pyint-'));
-  const ws = path.join(tmp, 'python');
-  await fsp.cp(fixture, ws, { recursive: true, filter: (s) => !/[/\\](__pycache__|\.pytest_cache)$/.test(s) });
+  await fsp.cp(fixture, path.join(tmp, 'python'), { recursive: true, filter: (s) => !/[/\\](__pycache__|\.pytest_cache)$/.test(s) });
+  // Canonical path: on Windows CI os.tmpdir() is the 8.3 form (C:\Users\RUNNER~1\…), NOVA reports the long one.
+  const ws = await fsp.realpath(path.join(tmp, 'python'));
   execFileSync(sys!, ['-m', 'venv', '--without-pip', path.join(ws, '.venv')], { timeout: 120_000 });
   const venvPy = isWin ? path.join(ws, '.venv', 'Scripts', 'python.exe') : path.join(ws, '.venv', 'bin', 'python');
   const args = ['.']; if (process.env.NOVA_E2E_NO_SANDBOX) args.unshift('--no-sandbox');
