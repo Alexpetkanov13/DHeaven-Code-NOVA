@@ -1,6 +1,50 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack (bundled first-party extension) — verified on Linux; Windows untested
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers. CI runs unit + E2E on Linux and Windows.
+
+## External language servers: TypeScript/JavaScript, Python, Rust (2026-10-13, ADR-0018)
+Session start audit: existing repo, HEAD `a41d40c`, CI green on ubuntu + windows for that commit. Locally on a fresh container: `cargo build --release`, `pnpm typecheck`, `pnpm lint`, `pnpm test` all PASS (desktop 97 + 2 skipped). The last three commits before this session (Quick Open / Go to Symbol / breadcrumbs / back-forward `5b2bf6d`, split editors up to 4 groups `61b11e6`, session restore / hot exit `a41d40c`) had E2E specs (`navigation`, `split`, `session`) but no entry here; they are covered by the full-suite run below.
+
+Gap found: Phase 3 promised TS/Python/Rust, but the registry only had JVM servers, and the LSP manager required a JDK for every server.
+
+What was built:
+- **Two server kinds** (`main/lsp/registry.ts`). `jvm` (JDT LS, kotlin-ls) is unchanged. `external` servers are installed by the user's toolchain and are **never downloaded by NOVA**: `typescript-language-server --stdio` (ts/js; `.tsx`/`.jsx` sent as `typescriptreact`/`javascriptreact`), `pyright-langserver --stdio` (or basedpyright), and `rust-analyzer`.
+- **Discovery** (`main/lsp/discover.ts`). The configured path wins, then PATH, then `~/.cargo/bin`, `~/.local/bin` and `%APPDATA%\npm` (or `/usr/local/bin` and `/opt/homebrew/bin`). PATHEXT is honoured on Windows. A `--version` probe (10 s bound) runs where the server supports it; it catches the rustup `rust-analyzer` proxy when the component is missing. The result is cached until Re-detect, Restart or a path change.
+- **Windows `.cmd` shims** run through `cmd.exe /d /s /c` with verbatim quoted args. cmd metacharacters in a path or argument are refused.
+- **UI** (Language Servers view). An external card shows the executable and where it came from (PATH or chosen by you), the version it reported, setup commands when missing (no Install button), Re-detect, Choose Executable… (native picker in main) and Use PATH. It also shows live work-done progress.
+- **`settings.lspServerPaths`** is excluded from `SettingsPatch`. Only `lsp.setPath.v1` (main-process file dialog) can set it, so a renderer patch can't make NOVA run an arbitrary binary.
+- **LSP client.** It advertises `window.workDoneProgress`. `$/progress` begin/report/end appears on the card, coalesced to ≤4 status events/s. `*/refresh` server requests are answered with null. Trigger characters now include `" ' / <`.
+- **Monaco TS worker gate** (`renderer/lib/tsGate.ts`). Found during E2E: F12 showed "Definitions (2)". `setModeConfiguration` is a no-op after Monaco's TS mode has set up (it registers providers once). The built-in providers are now wrapped at registration time (`instanceof` the TS mode's `Adapter`) and return nothing while typescript-language-server is ready. Worker diagnostics are switched off via `setDiagnosticsOptions`. Everything turns back on when the server isn't ready. F2 falls back to the worker's rename when no server offers rename (before, F2 on TS/JS always said "not supported").
+- Definition/references no longer fail as a whole when a target can't be opened (`Promise.allSettled`). Out-of-workspace targets (lib.d.ts, Rust std) are dropped and logged.
+- **Fixtures:** `fixtures/typescript-node`, `fixtures/python`, `fixtures/rust-cargo` (standalone `[workspace]`, so it isn't pulled into the repo's Cargo workspace).
+- `scripts/provision-servers.mjs` skips external servers. CI installs pinned versions of the three servers the way a user would (`npm i -g typescript-language-server@6.0.2 typescript@5.9.3 pyright@1.1.414`, `rustup component add rust-analyzer`) on both OSes, so `languages.spec` runs for real, including the Windows `.cmd` path.
+
+Box provisioning for this session (outside the repo): typescript-language-server 6.0.2 + typescript 5.9 in `~/opt/tsls` (npm), Pyright 1.1.414 (`~/.local/bin`, pre-installed), rust-analyzer 1.97.0 (`rustup component add`), JDT LS / kotlin-ls / java-debug via `provision-servers.mjs` (SHA-256 verified), OpenJDK 21.0.12.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | PASS |
+| Unit tests | `pnpm test` | PASS: contract 4, ai-core 12 (+3 skipped, no Ollama), extension-api 12, desktop 104 (+3 skipped). One run inside a parallel `pnpm -r` while E2E was running timed out (5 s vitest default) in the new manager test; spawn-heavy tests now have a 30 s budget, and repeated runs pass |
+| New unit tests | `discover.test.ts`, `lsp.test.ts`, `session.test.ts` | PATH vs extra dirs, non-executable skipped, first name wins; probe success / non-zero exit with stderr / hang timeout, paths with spaces; manager: missing → `blocked` with setup guidance, no pid, `download: null`; broken probe → reason names path + error; configured path wins (PATH not searched), re-detect after fix → ready with probed version, `.tsx` sent as `typescriptreact`; Windows-only `.cmd` quoting/refusal (runs on Windows CI only); progress text begin/report/end; renderer settings patch cannot set `lspServerPaths` |
+| **Languages E2E (real servers)** | `PATH=…tsls…:~/.local/bin:~/.cargo/bin NOVA_E2E_NO_SANDBOX=1 xvfb-run -a npx playwright test e2e/languages.spec.ts` | PASS 4/4. **TS:** tsls ready "found on PATH"; `greet(42)` in main.ts → Problems *Argument of type 'number' is not assignable to parameter of type 'string'* (cross-file, from the server); Problems has no *Cannot find module* (worker off); completion `greetAll`; F12 on `Greeter` → greeter.ts (single result). **Python:** Pyright → *cannot be assigned to parameter "name"*, completion `greet_all`, F12 → app/greeter.py. **Rust:** ready, waits for indexing progress to clear, F12 → src/greeter.rs, completion `greet_all`, `let broken: i32 = "oops"` + save → *mismatched types* (rustc via cargo check). **Missing server:** PATH=/usr/bin:/bin, HOME empty → pyright `blocked`, *Not found on PATH*, setup shows `pipx install pyright`, no Install button, no pid, editor still editable; Choose Executable… → "chosen by you" → Start → ready; `settings.json` has the path; Use PATH → not found again |
+| All E2E | `NOVA_SERVERS_DIR=~/nova-servers … xvfb-run -a npx playwright test` | PASS: 22 passed, 1 skipped (ai, no Ollama), 7.8 min, all servers on PATH (so TS fixtures in the older specs also ran with tsls active) |
+| Windows | CI (`ci.yml`) | NOT RUN in this session (pushed to the feature branch; `ci.yml` triggers on push to `main` and on PRs) |
+
+Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-lsp-setup.png` (session scratchpad, not committed).
+
+### Limitations
+- No Python interpreter/venv picker (Pyright uses PATH python or its own config); Pyright has no formatter.
+- No DAP or test explorer for TS/Python/Rust.
+- Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
+- Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
+- The TS gate relies on Monaco internals (`tsMode.js` `Adapter` export); re-check on Monaco upgrades. The E2E's "no *Cannot find module*" assertion guards it.
+- Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
+
+### Next slice (by dependency/value)
+1. Run/test/debug for the new languages. Test explorer adapters for `cargo test`, pytest and vitest/jest/node:test (parse real reporter output). DAP: debugpy (Python), Node's built-in inspector via js-debug, and CodeLLDB (Rust). The DAP layer is already generic (ADR-0014).
+2. Python interpreter/venv picker (discover `.venv`, `venv`, conda, PATH), passed to Pyright via `workspace/configuration` (`python.pythonPath`) and to run/test/debug.
+3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
+4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
 

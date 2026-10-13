@@ -4,7 +4,7 @@ import os from 'node:os';
 import { FrameDecoder, encodeFrame } from './jsonrpc';
 import { canonicalUri, fileUri, mapUris, serverUri } from './uri';
 import { LspConnection } from './server';
-import { LspManager, badges } from './manager';
+import { LspManager, badges, progressText } from './manager';
 import type { ServerDef } from './registry';
 
 const fake = path.join(__dirname, 'fake-server.cjs');
@@ -63,7 +63,7 @@ describe('LspConnection (fake server)', () => {
 
 describe('LspManager', () => {
   const def: ServerDef = {
-    id: 'fake', name: 'Fake', languages: ['fakelang'], version: '0', minJava: 0,
+    kind: 'jvm', id: 'fake', name: 'Fake', languages: ['fakelang'], version: '0', minJava: 0,
     download: { url: 'https://example.invalid', sha256: '', kind: 'zip', sizeHint: '', license: '' },
     installDir: (d) => d, isInstalled: async () => true, limitations: 'test only',
     launch: async ({ root }) => ({ command: process.execPath, args: [fake], cwd: root }),
@@ -91,6 +91,13 @@ describe('LspManager', () => {
     await until(() => events.filter(([n, p]) => n === 'lsp.status.v1' && (p as { servers: { state: string }[] }).servers[0]!.state === 'ready').length >= 2);
     expect((await m.status())[0]!.pid).not.toBe(pid);
     await m.stopAll();
+  });
+  it('formats work-done progress (begin/report/end)', () => {
+    const b = progressText(undefined, { kind: 'begin', title: 'Indexing' })!;
+    expect(b).toBe('Indexing');
+    expect(progressText(b, { kind: 'report', message: '45/120 (std)', percentage: 37.4 })).toBe('Indexing — 45/120 (std) 37%');
+    expect(progressText('Indexing — 1/2', { kind: 'report', percentage: 80 })).toBe('Indexing — 80%');
+    expect(progressText(b, { kind: 'end' })).toBeNull();
   });
   it('badges reflect static and dynamic capabilities only', () => {
     expect(badges({ hoverProvider: false, definitionProvider: true }, new Set(['textDocument/rename']))).toEqual(['definition', 'rename']);

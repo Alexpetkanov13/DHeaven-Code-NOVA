@@ -239,12 +239,29 @@ const handlers: Handlers = {
   'lsp.install.v1': async ({ serverId }) => {
     const def = Object.values(SERVERS).find((d) => d.id === serverId);
     if (!def) throw new AppError('NOT_FOUND', 'Unknown server');
+    if (def.kind !== 'jvm') throw new AppError('INVALID_REQUEST', `${def.name} is installed with your own toolchain: ${def.setup.commands.join(' or ')}`);
     const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('lsp.install.v1', { serverId, message, ...extra });
     void installServer(def, serversDir(), (u) => net.fetch(u as string), note)
       .then(() => { note('Installed', { done: true }); void lsp.restart(serverId).catch(() => {}); })
       .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
     return null;
   },
+  'lsp.setPath.v1': async ({ serverId, pick }) => {
+    const def = Object.values(SERVERS).find((d) => d.id === serverId);
+    if (!def || def.kind !== 'external') throw new AppError('NOT_FOUND', 'Unknown external language server');
+    let exe: string | null = null;
+    if (pick) {
+      const r = await dialog.showOpenDialog(win!, { title: `Choose the ${def.name} executable (${def.executables.join(' / ')})`, properties: ['openFile', 'dontAddToRecent'],
+        filters: process.platform === 'win32' ? [{ name: 'Programs', extensions: ['exe', 'cmd', 'bat'] }] : [] });
+      if (r.canceled || !r.filePaths[0]) return { path: (await store.getSettings()).lspServerPaths[serverId] ?? null };
+      exe = r.filePaths[0];
+    }
+    await store.setLspServerPath(serverId, exe);
+    lsp.redetect();
+    if (lsp.isRunning(serverId)) await lsp.restart(serverId);
+    return { path: exe };
+  },
+  'lsp.detect.v1': async () => { lsp.redetect(); return lsp.status(); },
   'lsp.open.v1': async ({ languageId, uri, version, text }) => { needWs(); await lsp.didOpen(languageId, uri, version, text); return null; },
   'lsp.change.v1': async ({ languageId, uri, version, changes }) => { lsp.didChange(languageId, uri, version, changes); return null; },
   'lsp.save.v1': async ({ languageId, uri }) => { lsp.didSave(languageId, uri); return null; },
@@ -496,6 +513,7 @@ app.whenReady().then(async () => {
   lsp = new LspManager({
     serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
     isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
+    configuredPath: async (id) => (await store.getSettings()).lspServerPaths[id] ?? null,
   });
   let execSeq = 0;
   dbg = new DebugManager({

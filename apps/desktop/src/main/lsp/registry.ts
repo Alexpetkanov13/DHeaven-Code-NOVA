@@ -5,11 +5,18 @@ import crypto from 'node:crypto';
 import type { Jdk } from '../jdk';
 import type { LaunchSpec } from './server';
 
-export type ServerId = 'jdtls' | 'kotlin-ls';
-export interface ServerDef {
+export type ServerId = 'jdtls' | 'kotlin-ls' | 'tsls' | 'pyright' | 'rust-analyzer';
+interface BaseDef {
+  id: string; name: string; languages: string[];
   /** initialize can take long (kotlin-ls resolves the Gradle classpath inside it; slow on Windows). Default 120 s. */
   initTimeoutMs?: number;
-  id: string; name: string; languages: string[]; version: string; minJava: number;
+  /** LSP languageId for a document when it differs from Monaco's id (e.g. .tsx -> typescriptreact). */
+  lspLanguageId?(monacoLang: string, uri: string): string;
+  limitations: string;
+}
+/** JVM server downloaded by NOVA (pinned URL + SHA-256, explicit consent) and run on a discovered JDK. */
+export interface JvmServerDef extends BaseDef {
+  kind: 'jvm'; version: string; minJava: number;
   /** Highest JDK major the server is known to run on (inclusive); undefined = no limit. */
   maxJava?: number;
   download: { url: string; sha256: string; kind: 'tar.gz' | 'zip'; sizeHint: string; license: string };
@@ -17,8 +24,22 @@ export interface ServerDef {
   isInstalled(serversDir: string): Promise<boolean>;
   launch(o: { serversDir: string; storageDir: string; root: string; jdk: Jdk }): Promise<LaunchSpec>;
   initOptions?(jdk: Jdk, serversDir: string): unknown;
-  limitations: string;
 }
+/**
+ * Server the user installs with their own toolchain (npm/pip/rustup). NOVA never downloads these: it finds the
+ * executable on PATH (or the path the user picked), verifies it with `probeArgs` when the server supports that, and
+ * shows the setup commands when it is missing.
+ */
+export interface ExternalServerDef extends BaseDef {
+  kind: 'external';
+  executables: string[];
+  args: string[];
+  /** Arguments for a quick self-check that must exit 0 (e.g. --version); omitted when the server has none. */
+  probeArgs?: string[];
+  setup: { summary: string; commands: string[]; url: string; license: string };
+  initOptions?(): unknown;
+}
+export type ServerDef = JvmServerDef | ExternalServerDef;
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
 const javaExe = (jdk: Jdk) => path.join(jdk.home, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 const hash = (s: string) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -26,7 +47,7 @@ const hash = (s: string) => crypto.createHash('sha1').update(s).digest('hex').sl
 const JDTLS_VERSION = '1.61.0';
 export const SERVERS: Record<ServerId, ServerDef> = {
   jdtls: {
-    id: 'jdtls', name: 'Eclipse JDT Language Server', languages: ['java'], version: JDTLS_VERSION, minJava: 21,
+    kind: 'jvm', id: 'jdtls', name: 'Eclipse JDT Language Server', languages: ['java'], version: JDTLS_VERSION, minJava: 21,
     download: { url: `https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/jdt-language-server-${JDTLS_VERSION}-202609031315.tar.gz`, sha256: '338e7e73d61836651ba2453919a0d34fa763eb4e7c03342092309bffb8934c64', kind: 'tar.gz', sizeHint: '~50 MB', license: 'EPL-2.0' },
     installDir: (d) => path.join(d, 'jdtls', JDTLS_VERSION),
     isInstalled: async (d) => exists(path.join(d, 'jdtls', JDTLS_VERSION, 'plugins')),
@@ -59,7 +80,7 @@ export const SERVERS: Record<ServerId, ServerDef> = {
     limitations: 'Server-initiated workspace/applyEdit is not yet supported, so some code actions that rely on it will report "not applied".',
   },
   'kotlin-ls': {
-    id: 'kotlin-ls', initTimeoutMs: 600_000, name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11, maxJava: 21,
+    kind: 'jvm', id: 'kotlin-ls', initTimeoutMs: 600_000, name: 'Kotlin Language Server (fwcd)', languages: ['kotlin'], version: '1.3.13', minJava: 11, maxJava: 21,
     download: { url: 'https://github.com/fwcd/kotlin-language-server/releases/download/1.3.13/server.zip', sha256: '4fe7d71d087b307c7869036171bd9d8c6a4284cd7c25b89098b0a24eb2d9b6d2', kind: 'zip', sizeHint: '~90 MB', license: 'MIT' },
     installDir: (d) => path.join(d, 'kotlin-ls'),
     isInstalled: async (d) => exists(path.join(d, 'kotlin-ls', 'server', 'bin', 'kotlin-language-server')),
@@ -71,6 +92,26 @@ export const SERVERS: Record<ServerId, ServerDef> = {
       return { command: bin, args: [], cwd: root, env };
     },
     limitations: 'fwcd/kotlin-language-server is community-maintained and lags Kotlin 2.x (embeds the Kotlin 2.1.0 compiler) and crashes at startup on JDKs whose version string it cannot parse (e.g. 25.0.4.1), so NOVA runs it on JDK 11–21; Gradle project import is slow and may resolve only part of the classpath. JetBrains kotlin-lsp is currently distributed as a VS Code bundle (.vsix) and is not integrated yet.',
+  },
+  tsls: {
+    kind: 'external', id: 'tsls', name: 'TypeScript Language Server', languages: ['typescript', 'javascript'],
+    executables: ['typescript-language-server'], args: ['--stdio'], probeArgs: ['--version'],
+    lspLanguageId: (lang, uri) => (/\.tsx$/i.test(uri) ? 'typescriptreact' : /\.jsx$/i.test(uri) ? 'javascriptreact' : lang),
+    initOptions: () => ({ hostInfo: 'DHeaven Code NOVA', preferences: { includeCompletionsForModuleExports: true, includeCompletionsWithInsertText: true } }),
+    setup: { summary: 'Install with npm (needs Node.js). The server uses the project\'s own node_modules/typescript when present, otherwise the globally installed one.', commands: ['npm install -g typescript-language-server typescript'], url: 'https://github.com/typescript-language-server/typescript-language-server', license: 'Apache-2.0 (server), Apache-2.0 (TypeScript)' },
+    limitations: 'Runs tsserver for the whole project (tsconfig/jsconfig aware). While it is ready, Monaco\'s built-in single-file TypeScript worker is switched off for TS/JS so results are not duplicated; it is switched back on when the server stops. Workspace plugins configured in tsconfig run inside tsserver, which is why the server needs a trusted workspace.',
+  },
+  pyright: {
+    kind: 'external', id: 'pyright', name: 'Pyright', languages: ['python'],
+    executables: ['pyright-langserver', 'basedpyright-langserver'], args: ['--stdio'],
+    setup: { summary: 'Install with pip/pipx/uv (bundles its own Node.js) or with npm. NOVA does not pick an interpreter yet: Pyright uses the python on PATH or the one in pyrightconfig.json / pyproject.toml ([tool.pyright] venvPath/venv).', commands: ['pipx install pyright', 'npm install -g pyright'], url: 'https://github.com/microsoft/pyright', license: 'MIT' },
+    limitations: 'Type checking, completion, hover, navigation, rename and organize-imports code actions. Pyright has no formatter: formatting stays unavailable (use black/ruff from the terminal). No debugger or test explorer for Python yet.',
+  },
+  'rust-analyzer': {
+    kind: 'external', id: 'rust-analyzer', name: 'rust-analyzer', languages: ['rust'],
+    executables: ['rust-analyzer'], args: [], probeArgs: ['--version'], initTimeoutMs: 300_000,
+    setup: { summary: 'Install the rustup component (matches your toolchain). The rustup proxy exists even when the component is missing; NOVA runs `rust-analyzer --version` to tell the difference.', commands: ['rustup component add rust-analyzer'], url: 'https://rust-analyzer.github.io/', license: 'MIT OR Apache-2.0' },
+    limitations: 'Needs a Cargo.toml in the workspace (or a direct sub-folder). Compiler diagnostics come from `cargo check` after save, which runs build scripts and proc macros: trusted workspaces only. Formatting needs rustfmt (`rustup component add rustfmt`).',
   },
 };
 export const serverForLanguage = (lang: string): ServerDef | undefined => Object.values(SERVERS).find((s) => s.languages.includes(lang));

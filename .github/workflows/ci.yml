@@ -59,6 +59,14 @@ jobs:
       - name: Provision language servers (pinned URLs + SHA-256)
         working-directory: apps/desktop
         run: node scripts/provision-servers.mjs "${{ env.NOVA_SERVERS_DIR }}"
+      - name: External language servers (user-installed path, pinned versions)
+        # NOVA never installs these; CI installs them the way a user would so languages.spec runs for real.
+        shell: bash
+        run: |
+          npm install -g typescript-language-server@6.0.2 typescript@5.9.3 pyright@1.1.414
+          rustup component add rust-analyzer
+          typescript-language-server --version
+          rust-analyzer --version
       - name: Playwright Electron runtime deps (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb

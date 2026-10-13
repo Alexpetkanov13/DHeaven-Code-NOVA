@@ -35,6 +35,8 @@ export const Settings = z.object({
   colorTheme: z.string().max(256).default('nova-dark'),
   terminalProfile: z.string().max(64).nullable().default(null),
   restoreSession: z.boolean().default(true),
+  /** Executable chosen per external language server (set only through the main-process file picker, never by a renderer patch). */
+  lspServerPaths: z.record(z.string().max(64), z.string().max(4096)).default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -43,7 +45,7 @@ export const SessionDraft = z.object({ rel: z.string().min(1).max(4096), content
 export type SessionDraft = z.infer<typeof SessionDraft>;
 export const SessionState = z.object({ layout: z.unknown(), views: z.unknown(), drafts: z.array(SessionDraft).max(100), savedAt: z.number() });
 export type SessionState = z.infer<typeof SessionState>;
-export const SettingsPatch = Settings.partial().omit({ version: true });
+export const SettingsPatch = Settings.partial().omit({ version: true, lspServerPaths: true });
 
 const ExtId = z.string().max(256).regex(/^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/);
 export const GitFile = z.object({ path: z.string(), index: z.string(), worktree: z.string() });
@@ -135,7 +137,14 @@ export const ServerStatus = z.object({
   id: z.string(), name: z.string(), version: z.string(), languages: z.array(z.string()), installed: z.boolean(),
   state: z.enum(['stopped', 'starting', 'ready', 'restarting', 'crashed', 'failed', 'blocked']), reason: z.string().nullable(),
   pid: z.number().nullable(), capabilities: z.array(z.string()), limitations: z.string(),
-  download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }),
+  kind: z.enum(['jvm', 'external']),
+  /** jvm servers: NOVA downloads a pinned archive after consent. */
+  download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }).nullable(),
+  /** external servers: resolved executable, where it came from, and how to install it. */
+  path: z.string().nullable(), pathSource: z.enum(['configured', 'PATH']).nullable(),
+  /** Work-done progress the server reports right now (e.g. "Indexing 45/120"); null when idle. */
+  progress: z.string().nullable(),
+  setup: z.object({ summary: z.string(), commands: z.array(z.string()), url: z.string(), license: z.string() }).nullable(),
 });
 export type ServerStatus = z.infer<typeof ServerStatus>;
 export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'textDocument/documentSymbol', 'workspace/executeCommand'] as const;
@@ -222,6 +231,9 @@ export const channels = {
   'lsp.restart.v1': def(z.object({ serverId: z.string() }), z.null()),
   'lsp.stop.v1': def(z.object({ serverId: z.string() }), z.null()),
   'lsp.install.v1': def(z.object({ serverId: z.string(), consent: z.literal(true) }), z.null()),
+  /** Main shows a native file picker (pick=true) or clears the configured path; the renderer never supplies a path. */
+  'lsp.setPath.v1': def(z.object({ serverId: z.string().max(64), pick: z.boolean() }), z.object({ path: z.string().nullable() })),
+  'lsp.detect.v1': def(z.object({}), z.array(ServerStatus)),
   'lsp.open.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), text: z.string().max(32 * 1024 * 1024) }), z.null()),
   'lsp.change.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), changes: z.array(z.object({ range: z.unknown().optional(), text: z.string() })).max(10000) }), z.null()),
   'lsp.save.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri }), z.null()),

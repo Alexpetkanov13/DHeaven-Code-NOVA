@@ -1,10 +1,12 @@
 import type { LspDiagnostic, ServerStatus } from '@nova/ipc-contract';
 import { monaco } from './monaco';
+import { setBuiltinTypeScript } from './tsGate';
 import { call, on } from './ipc';
 import { fromLsp, fromTsNavTree, type Sym } from './outline';
 import { flattenWorkspaceEdit, type TextEdit, type WorkspaceEditLike } from './textEdits';
 
-export const LSP_LANGS = ['java', 'kotlin'];
+export const LSP_LANGS = ['java', 'kotlin', 'typescript', 'javascript', 'python', 'rust'];
+const TS_LANGS = ['typescript', 'javascript'];
 type R = { start: { line: number; character: number }; end: { line: number; character: number } };
 const toRange = (r: R) => new monaco.Range(r.start.line + 1, r.start.character + 1, r.end.line + 1, r.end.character + 1);
 const toPos = (p: monaco.IPosition) => ({ line: p.lineNumber - 1, character: p.column - 1 });
@@ -62,7 +64,12 @@ export class LspBridge {
         for (const t of this.tracked.values()) if (s.languages.includes(t.lang)) this.sendOpen(t.model, t.lang); // first start or after crash restart
       } else if (s.state !== 'ready') this.ready.delete(s.id);
     }
+    const tsReady = TS_LANGS.some((l) => this.langReady(l));
+    if (tsReady !== this.tsServerActive) { this.tsServerActive = tsReady; setBuiltinTypeScript(!tsReady); }
   }
+  private tsServerActive = false;
+  /** True while TS/JS intelligence comes from typescript-language-server rather than Monaco's worker. */
+  get typeScriptServerActive() { return this.tsServerActive; }
 
   private sendOpen(model: monaco.editor.ITextModel, lang: string) {
     void call('lsp.open.v1', { languageId: lang, uri: model.uri.toString(), version: model.getVersionId(), text: model.getValue() }).catch((e) => this.ui.log(String(e), true));
@@ -100,7 +107,7 @@ export class LspBridge {
   /** Document outline: language server for java/kotlin, the bundled TypeScript worker for ts/js; null when unavailable. */
   async outline(model: monaco.editor.ITextModel): Promise<Sym[] | null> {
     const lang = model.getLanguageId();
-    if (LSP_LANGS.includes(lang)) {
+    if (LSP_LANGS.includes(lang) && (!TS_LANGS.includes(lang) || this.langReady(lang))) {
       if (!this.caps(lang).includes('symbols')) return null;
       const r = await this.req<unknown>(model, 'textDocument/documentSymbol', { textDocument: { uri: model.uri.toString() } });
       return r === null ? null : fromLsp(r);
@@ -140,7 +147,7 @@ export class LspBridge {
     const L = monaco.languages;
     const doc = (m: monaco.editor.ITextModel) => ({ uri: m.uri.toString() });
     L.registerCompletionItemProvider(lang, {
-      triggerCharacters: ['.', ':', '@'],
+      triggerCharacters: ['.', ':', '@', '"', "'", '/', '<'],
       provideCompletionItems: async (model, position, ctx, token) => {
         if (!this.caps(lang).includes('completion')) return null;
         const r = await this.req<{ items?: unknown[]; isIncomplete?: boolean } | unknown[]>(model, 'textDocument/completion', { textDocument: doc(model), position: toPos(position), context: { triggerKind: ctx.triggerKind + 1, triggerCharacter: ctx.triggerCharacter } }, token);
@@ -190,15 +197,17 @@ export class LspBridge {
       provideDefinition: async (model, position, token) => {
         if (!this.caps(lang).includes('definition')) return null;
         const r = locs(await this.req(model, 'textDocument/definition', { textDocument: doc(model), position: toPos(position) }, token));
-        await Promise.all(r.map((l) => this.ui.ensureModel(l.uri.toString())));
-        return r;
+        await Promise.allSettled(r.map((l) => this.ui.ensureModel(l.uri.toString())));
+        const open = r.filter((l) => monaco.editor.getModel(l.uri));
+        if (open.length < r.length) this.ui.log(`Definition outside the workspace (not browsable yet): ${r.filter((l) => !monaco.editor.getModel(l.uri)).map((l) => l.uri.fsPath).slice(0, 3).join(', ')}`);
+        return open;
       },
     });
     L.registerReferenceProvider(lang, {
       provideReferences: async (model, position, ctx, token) => {
         if (!this.caps(lang).includes('references')) return null;
         const r = locs(await this.req(model, 'textDocument/references', { textDocument: doc(model), position: toPos(position), context: { includeDeclaration: ctx.includeDeclaration } }, token));
-        await Promise.all([...new Set(r.map((l) => l.uri.toString()))].slice(0, 200).map((u) => this.ui.ensureModel(u)));
+        await Promise.allSettled([...new Set(r.map((l) => l.uri.toString()))].slice(0, 200).map((u) => this.ui.ensureModel(u)));
         return r.filter((l) => monaco.editor.getModel(l.uri));
       },
     });
@@ -253,7 +262,11 @@ export class LspBridge {
     const model = editor.getModel(); const pos = editor.getPosition();
     if (!model || !pos) return;
     const lang = model.getLanguageId();
-    if (!this.caps(lang).includes('rename')) { this.ui.log('Rename is not supported by the active language server', true); return; }
+    if (!this.caps(lang).includes('rename')) {
+      // No server rename: TS/JS fall back to the bundled worker's rename (gate is open whenever no server is ready).
+      if (TS_LANGS.includes(lang)) { await editor.getAction('editor.action.rename')?.run(); return; }
+      this.ui.log('Rename is not supported by the active language server', true); return;
+    }
     const prep = await this.req<{ range?: R; placeholder?: string } | R>(model, 'textDocument/prepareRename', { textDocument: { uri: model.uri.toString() }, position: toPos(pos) });
     const word = model.getWordAtPosition(pos)?.word ?? '';
     const initial = prep && 'placeholder' in prep && prep.placeholder ? prep.placeholder : word;

@@ -18,6 +18,7 @@ function handle(m) {
     send({ id: 'reg1', method: 'client/registerCapability', params: { registrations: [{ id: 'x', method: 'textDocument/formatting' }] } });
     return send({ id: m.id, result: { capabilities: { hoverProvider: true, completionProvider: {}, textDocumentSync: 2 } } });
   }
+  if (m.method === 'textDocument/didOpen') process.stderr.write('didOpen languageId=' + m.params.textDocument.languageId + '\n');
   if (m.method === 'textDocument/didOpen') return send({ method: 'textDocument/publishDiagnostics', params: { uri: m.params.textDocument.uri, diagnostics: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, message: 'fake error v' + m.params.textDocument.version, severity: 1 }] } });
   if (m.method === 'textDocument/hover') return send({ id: m.id, result: { contents: { kind: 'markdown', value: 'hover at ' + m.params.position.line + ' ' + m.params.textDocument.uri } } });
   if (m.method === 'textDocument/completion') { slow.set(m.id, setTimeout(() => send({ id: m.id, result: [] }), 5000)); return; }
