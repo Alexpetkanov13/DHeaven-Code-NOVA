@@ -250,6 +250,16 @@ export const channels = {
     jdks: z.array(z.object({ home: z.string(), version: z.string(), major: z.number(), source: z.string() })),
     globalHome: z.string().nullable(), workspaceHome: z.string().nullable(), effective: z.string().nullable(),
   })),
+  /** Python interpreters (probed) and the one in effect for this workspace (tests, debugger, Pyright). */
+  'python.list.v1': def(z.object({}), z.object({
+    interpreters: z.array(z.object({ path: z.string(), version: z.string(), source: z.string() })),
+    selected: z.string().nullable(),
+    effective: z.object({ command: z.string(), source: z.string(), version: z.string().nullable(), note: z.string().nullable() }),
+  })),
+  /** path must be one of the interpreters the last python.list.v1 returned (or null = automatic); main re-checks it. */
+  'python.select.v1': def(z.object({ path: z.string().max(4096).nullable() }), z.null()),
+  /** Native file picker in main; the chosen file must run as Python. */
+  'python.pick.v1': def(z.object({}), z.object({ path: z.string().nullable() })),
   'jdk.select.v1': def(z.object({ home: z.string().max(4096).nullable(), scope: z.enum(['global', 'workspace']) }), z.null()),
   'gradle.detect.v1': def(z.object({}), z.object({ isGradle: z.boolean(), wrapper: z.boolean(), buildFile: z.string().nullable() })),
   'gradle.tasks.v1': def(z.object({}), z.array(z.object({ name: z.string(), group: z.string(), description: z.string() }))),

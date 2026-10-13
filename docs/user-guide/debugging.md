@@ -12,7 +12,7 @@ Uses **debugpy**, which you install yourself into the Python NOVA uses:
 python -m pip install debugpy
 ```
 
-NOVA uses the folder's `.venv`, `venv` or `env` if one exists, otherwise `python3` (`python` on Windows). The first line in the Debug Console shows which Python and which debugpy version ran. Fields:
+NOVA uses the folder's Python interpreter: the one chosen in the **Python** card of the Language Servers view, else the folder's `.venv`, `venv` or `env`, else `python3` (`python` on Windows). The first line in the Debug Console shows which Python and which debugpy version ran. Fields:
 - **Program:** a script path (e.g. `app/main.py`), **or Module:** run with `-m` (e.g. `app.main`, `pytest`).
 - **Arguments:** quotes group words (`"a b"`).
 - **Env, Working dir.**

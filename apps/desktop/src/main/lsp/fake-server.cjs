@@ -12,12 +12,17 @@ process.stdin.on('data', (c) => {
   }
 });
 const slow = new Map();
+// Pull configuration like Pyright: after 'initialized' and on didChangeConfiguration; log what the client answered.
+let cfgSeq = 0;
+const pullConfig = () => send({ id: 'cfg' + (++cfgSeq), method: 'workspace/configuration', params: { items: [{ section: 'python' }, { section: 'python.analysis' }] } });
 function handle(m) {
   if (m.method === 'initialize') {
     send({ method: 'window/logMessage', params: { type: 3, message: 'fake ready ' + m.params.rootUri } });
     send({ id: 'reg1', method: 'client/registerCapability', params: { registrations: [{ id: 'x', method: 'textDocument/formatting' }] } });
     return send({ id: m.id, result: { capabilities: { hoverProvider: true, completionProvider: {}, textDocumentSync: 2 } } });
   }
+  if (m.id && String(m.id).startsWith('cfg') && 'result' in m) { process.stderr.write('config ' + JSON.stringify(m.result) + '\n'); return; }
+  if (m.method === 'initialized' || m.method === 'workspace/didChangeConfiguration') return pullConfig();
   if (m.method === 'textDocument/didOpen') process.stderr.write('didOpen languageId=' + m.params.textDocument.languageId + '\n');
   if (m.method === 'textDocument/didOpen') return send({ method: 'textDocument/publishDiagnostics', params: { uri: m.params.textDocument.uri, diagnostics: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, message: 'fake error v' + m.params.textDocument.version, severity: 1 }] } });
   if (m.method === 'textDocument/hover') return send({ id: m.id, result: { contents: { kind: 'markdown', value: 'hover at ' + m.params.position.line + ' ' + m.params.textDocument.uri } } });

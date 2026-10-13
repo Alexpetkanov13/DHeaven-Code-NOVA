@@ -67,17 +67,6 @@ export async function discoverPytest(root: string): Promise<TestNode[]> {
   return nodes;
 }
 
-const exists = (p: string) => fs.access(p).then(() => true, () => false);
-/** Project virtualenv (.venv / venv / env in the workspace) first, else the platform's python on PATH. */
-export async function pythonFor(root: string): Promise<{ command: string; source: string }> {
-  const win = process.platform === 'win32';
-  for (const d of ['.venv', 'venv', 'env']) {
-    const exe = win ? path.join(root, d, 'Scripts', 'python.exe') : path.join(root, d, 'bin', 'python');
-    if (await exists(exe)) return { command: exe, source: `virtualenv ${d}` };
-  }
-  return { command: win ? 'python' : 'python3', source: 'PATH' };
-}
-
 export function pytestXmlPath(runId: number) { return path.join(os.tmpdir(), `nova-pytest-${process.pid}-${runId}.xml`); }
 
 /** pytest arguments: xunit1 (has file/line), captured output kept in the XML, explicit rootdir so node ids match discovery. */

@@ -1,6 +1,22 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python debugging. CI runs unit + E2E on Linux and Windows.
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python debugging + interpreter selection. CI runs unit + E2E on Linux and Windows.
+
+## Python interpreter selection (2026-10-13, ADR-0021)
+- **`main/python.ts`:** `discoverPythons` (workspace venvs, PATH, pyenv, conda base/envs, `py -0p`; each probed; deduplicated by real executable) and `resolvePython` (selected for this workspace > workspace venv > PATH as a full path; the Windows Store stub is skipped; a broken selection is reported in `note`).
+- **Used by:**
+  - pytest runs: the output's first line names the interpreter.
+  - the debugpy adapter: the Debug Console shows a broken selection.
+  - Pyright: `workspace/configuration` section `python` → `{ pythonPath }`, plus `workspace/didChangeConfiguration` when it changes.
+- **IPC:** `python.list.v1`; `python.select.v1` accepts only a path from the last list (or null); `python.pick.v1` uses main's native picker and must pass the probe. The choice is stored per workspace in userData.
+- **UI:** a Python card in the Language Servers view showing the interpreter in use, a dropdown, Choose Interpreter… and Refresh.
+- **Cleanup:** `pythonFor` in `testing/pytest.ts` is removed, superseded by `resolvePython`.
+
+| Check | Command | Result |
+|---|---|---|
+| Unit | `vitest run` (desktop) | PASS 136 (+3 skipped). `python.test.ts`: real probe; `/bin/echo` and missing paths rejected; resolution order with a real venv symlink; broken selection → `note` + venv fallback; PATH result is absolute; discovery finds the workspace venv + PATH. `lsp.test.ts`: the fake server pulls `workspace/configuration` like Pyright; it gets `{pythonPath}` for `python` and `null` for `python.analysis`, and pulls again after `configurationChanged` |
+| E2E | `e2e/python-interpreter.spec.ts` (real pytest 8.4.2, Pyright 1.1.414) | PASS, twice. Workspace with a bare `python -m venv --without-pip .venv` → the card shows `.venv` (virtualenv) → Run All says *pytest is not installed for …/.venv/bin/python* → debugging says *debugpy is not installed for …/.venv/bin/python* → Pyright: *Import "pytest" could not be resolved*. Select the PATH interpreter in the card → *selected for this workspace* → the Pyright diagnostic clears (no restart) → Run All runs with it, 4 passed → `workspace-settings.json` holds the path. The first two attempts failed on test locators (an option whose text contains "PATH" and the empty-state Problems panel); the product needed no change |
+| Regression | `debug-python`, `testing-langs`, `languages` specs | PASS |
 
 ## Probe race fix (found by a flaky unit test)
 - **Bug:** `probeExecutable` (`--version` of external language servers) resolved on the child's `exit` event, which can fire before its stdout is fully read. Under load the version was lost, and the card showed "version unknown" for a working server. `probeDebugpy` had the same race, where it would have reported a spurious "import failed (exit 0)". The debugpy adapter stream was also destroyed on `exit`, which could drop the adapter's final events.
@@ -104,7 +120,7 @@ Box provisioning for this session (outside the repo): typescript-language-server
 Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-lsp-setup.png` (session scratchpad, not committed).
 
 ### Limitations
-- No Python interpreter/venv picker (Pyright uses PATH python or its own config); Pyright has no formatter.
+- Pyright has no formatter. (Interpreter picker: done, ADR-0021.)
 - No DAP for TS/JS or Rust (Python: debugpy since ADR-0020; tests: pytest, cargo test, Vitest and Jest since ADR-0019).
 - Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
 - Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
@@ -113,7 +129,7 @@ Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-ls
 
 ### Next slice (by dependency/value)
 1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: node:test/Mocha, and DAP for js-debug (Node) and CodeLLDB (Rust). Vitest/Jest are done (ADR-0019 addendum). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
-2. Python interpreter/venv picker (discover `.venv`, `venv`, conda, PATH), passed to Pyright via `workspace/configuration` (`python.pythonPath`) and to run/test/debug.
+2. ~~Python interpreter/venv picker~~ (done, ADR-0021).
 3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
 4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).
 

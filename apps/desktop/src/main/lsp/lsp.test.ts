@@ -99,6 +99,18 @@ describe('LspManager', () => {
     expect(progressText('Indexing — 1/2', { kind: 'report', percentage: 80 })).toBe('Indexing — 80%');
     expect(progressText(b, { kind: 'end' })).toBeNull();
   });
+  it('answers workspace/configuration per section and re-sends on configurationChanged (Pyright pythonPath)', async () => {
+    let py = '/venv/a/bin/python';
+    const m = new LspManager({ serversDir: os.tmpdir(), storageDir: os.tmpdir(), isTrusted: async () => true, jdkFor: async () => jdk, emit: () => {},
+      configuration: async (id, section) => (id === 'fake' && section === 'python' ? { pythonPath: py } : null) }, [def]);
+    await m.setWorkspace(os.tmpdir());
+    await m.restart('fake');
+    await until(() => m.logs('fake').some((l) => l.includes('config [{"pythonPath":"/venv/a/bin/python"},null]')));
+    py = '/venv/b/bin/python';
+    m.configurationChanged('fake');
+    await until(() => m.logs('fake').some((l) => l.includes('config [{"pythonPath":"/venv/b/bin/python"},null]')));
+    await m.stopAll();
+  }, 30_000);
   it('badges reflect static and dynamic capabilities only', () => {
     expect(badges({ hoverProvider: false, definitionProvider: true }, new Set(['textDocument/rename']))).toEqual(['definition', 'rename']);
   });

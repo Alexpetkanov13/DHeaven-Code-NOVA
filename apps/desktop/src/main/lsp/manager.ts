@@ -52,6 +52,8 @@ export interface ManagerDeps {
   configuredPath?(serverId: string): Promise<string | null>;
   /** Overridable for tests. */
   find?(names: string[]): Promise<string | null>;
+  /** Answer for a server's workspace/configuration item (e.g. Pyright's `python` section); null = server defaults. */
+  configuration?(serverId: string, section: string | undefined): Promise<unknown>;
   emit(name: 'lsp.status.v1' | 'lsp.diagnostics.v1', payload: unknown): void;
 }
 
@@ -205,9 +207,18 @@ export class LspManager {
     }
   }
 
+  /** Tells a running server its settings changed; servers that pull configuration (Pyright) ask again. */
+  configurationChanged(id: string) {
+    const e = this.entries.get(id);
+    if (e?.conn && e.state === 'ready') e.conn.notify('workspace/didChangeConfiguration', { settings: null });
+  }
+
   private onServerRequest(e: Entry, method: string, params: unknown): unknown {
     switch (method) {
-      case 'workspace/configuration': return ((params as { items?: unknown[] })?.items ?? []).map(() => null);
+      case 'workspace/configuration': {
+        const items = ((params as { items?: { section?: string }[] })?.items ?? []);
+        return Promise.all(items.map((it) => this.deps.configuration?.(e.def.id, it?.section).catch(() => null) ?? null));
+      }
       case 'client/registerCapability':
         for (const r of (params as { registrations?: { method: string }[] })?.registrations ?? []) e.dynamic.add(r.method);
         this.publish(); return null;

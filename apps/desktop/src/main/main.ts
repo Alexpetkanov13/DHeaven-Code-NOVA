@@ -23,8 +23,9 @@ import { JAVA_DEBUG, javaAdapter } from './dap/java';
 import { pythonAdapter } from './dap/python';
 import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, type TestFramework } from './junit';
 import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
-import { parsePytestXml, pythonFor, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
+import { parsePytestXml, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
 import { cargoArgs, parseCargoOutput } from './testing/cargo';
+import { discoverPythons, probePython, resolvePython, type PyInterpreter } from './python';
 import { jsArgs, parseJestJson, parseVitestJunit, planJs, reportPath, runnerEntry } from './testing/js';
 import { findExecutable } from './lsp/discover';
 import type { EventName, Events } from '@nova/ipc-contract';
@@ -107,6 +108,9 @@ const gradleKilled = new Set<number>();
 let gradleSeq = 0;
 let dbg!: DebugManager;
 const testRuns = new Map<number, ChildProcess>();
+/** The workspace's Python (chosen interpreter, else venv, else PATH) for tests, the debugger and Pyright. */
+async function pythonForWs(root: string) { return resolvePython(root, (await wsSettings.get(root)).pythonPath); }
+let lastPythons: PyInterpreter[] = [];
 /** One framework's part of a test run; output is streamed as tests.output.v1, results come from the tool's report. */
 async function runTestTarget(root: string, runId: number, framework: TestFramework, filters: string[], debug: boolean): Promise<{ code: number | null; results: TestCase[]; error: string | null }> {
   const out = (data: string) => emit('tests.output.v1', { runId, data });
@@ -126,9 +130,10 @@ async function runTestTarget(root: string, runId: number, framework: TestFramewo
     catch (e) { return { code, results: [], error: String(e) }; }
   }
   if (framework === 'pytest') {
-    const py = await pythonFor(root); const xml = pytestXmlPath(runId); const args = pytestArgs(root, filters, xml);
+    const py = await pythonForWs(root); const xml = pytestXmlPath(runId); const args = pytestArgs(root, filters, xml);
     await fs.rm(xml, { force: true });
-    out(`# Python: ${py.command} (${py.source})\n`); echo(py.command, args);
+    if (py.note) out(`# ${py.note}\n`);
+    out(`# Python: ${py.command} (${py.source}${py.version ? `, ${py.version}` : ''})\n`); echo(py.command, args);
     const r = await new Promise<{ code: number | null; output: string }>((resolve) => testRuns.set(runId, spawnTool(py.command, args, root, { ...process.env, PYTHONUNBUFFERED: '1' }, out, (c, o) => resolve({ code: c, output: o }))));
     const xmlText = await fs.readFile(xml, 'utf8').catch(() => null);
     await fs.rm(xml, { force: true });
@@ -337,6 +342,28 @@ const handlers: Handlers = {
     const extra = [g, w].filter((x): x is string => !!x);
     const eff = workspace ? await jdkFor(workspace.root, 0) : null;
     return { jdks: await discoverJdks(extra), globalHome: g, workspaceHome: w, effective: eff?.home ?? null };
+  },
+  'python.list.v1': async () => {
+    const root = needWs().root;
+    lastPythons = await discoverPythons(root);
+    return { interpreters: lastPythons, selected: (await wsSettings.get(root)).pythonPath, effective: await pythonForWs(root) };
+  },
+  'python.select.v1': async ({ path: p }) => {
+    const root = needWs().root;
+    if (p !== null && !lastPythons.some((x) => x.path === p)) throw new AppError('INVALID_REQUEST', 'Pick an interpreter from the discovered list, or use Choose Interpreter…');
+    await wsSettings.set(root, { pythonPath: p });
+    lsp.configurationChanged('pyright');
+    return null;
+  },
+  'python.pick.v1': async () => {
+    const root = needWs().root;
+    const r = await dialog.showOpenDialog(win!, { title: 'Choose a Python interpreter', defaultPath: root, properties: ['openFile', 'dontAddToRecent'], filters: process.platform === 'win32' ? [{ name: 'Python', extensions: ['exe'] }] : [] });
+    if (r.canceled || !r.filePaths[0]) return { path: (await wsSettings.get(root)).pythonPath };
+    const exe = r.filePaths[0];
+    try { await probePython(exe); } catch (e) { throw new AppError('INVALID_REQUEST', e instanceof Error ? e.message : String(e)); }
+    await wsSettings.set(root, { pythonPath: exe });
+    lsp.configurationChanged('pyright');
+    return { path: exe };
   },
   'jdk.select.v1': async ({ home, scope }) => {
     if (home && !(await probeJdk(home, 'selected'))) throw new AppError('NOT_FOUND', `Not a JDK (missing bin/java or release file): ${home}`);
@@ -577,6 +604,8 @@ app.whenReady().then(async () => {
     serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
     isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
     configuredPath: async (id) => (await store.getSettings()).lspServerPaths[id] ?? null,
+    // Pyright pulls `python.pythonPath`; give it the same interpreter tests and the debugger use.
+    configuration: async (id, section) => (id === 'pyright' && section === 'python' && workspace ? { pythonPath: (await pythonForWs(workspace.root)).command } : null),
   });
   let execSeq = 0;
   dbg = new DebugManager({
@@ -588,7 +617,7 @@ app.whenReady().then(async () => {
       waitJdtReady: (t, s) => lsp.waitReady('java', t, s),
       jdkFor: async (cfg) => (cfg.javaHome ? await probeJdk(cfg.javaHome, 'launch config') : null) ?? jdkFor(needWs().root, 0),
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
-    }), python: pythonAdapter({ pythonFor }) },
+    }), python: pythonAdapter({ pythonFor: pythonForWs }) },
   });
   const aiDir = path.join(app.getPath('userData'), 'ai');
   ai = new AiService({

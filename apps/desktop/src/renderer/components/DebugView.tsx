@@ -112,7 +112,7 @@ export function DebugView({ store, trusted, hasWorkspace, onError, askInstall }:
               <label>Env (KEY=VALUE per line)<textarea aria-label="Environment" rows={2} value={envText} onChange={(e) => setEnvText(e.target.value)} /></label>
               <label>Working dir<input aria-label="Working directory" placeholder="(workspace root)" value={draft.cwd ?? ''} onChange={(e) => setDraft({ ...draft, cwd: e.target.value })} /></label>
               <label className="check"><input type="checkbox" aria-label="Just my code" checked={draft.justMyCode ?? true} onChange={(e) => setDraft({ ...draft, justMyCode: e.target.checked })} /> Just my code</label>
-              <div className="muted small">Uses the workspace .venv / venv / env, else python on PATH. Needs debugpy: <code>python -m pip install debugpy</code>.</div>
+              <div className="muted small">Uses the workspace's Python (choose it in Language Servers → Python; default: .venv / venv / env, else PATH). Needs debugpy: <code>python -m pip install debugpy</code>.</div>
             </>) : (<>
               <label>Host<input aria-label="Host" value={draft.hostName ?? '127.0.0.1'} onChange={(e) => setDraft({ ...draft, hostName: e.target.value })} /></label>
               <label>Port<input aria-label="Port" type="number" value={draft.port ?? 5678} onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })} /></label>

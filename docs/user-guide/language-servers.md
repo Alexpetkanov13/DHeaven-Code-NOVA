@@ -25,7 +25,7 @@ While typescript-language-server is running, NOVA switches off Monaco's built-in
 Progress the server reports (for example rust-analyzer indexing, or `cargo check`) is shown on its card.
 
 ## Known limitations
-- Python: NOVA does not choose an interpreter or virtual environment yet. Pyright uses the `python` on PATH, or `venvPath`/`venv` from `pyrightconfig.json` or `[tool.pyright]` in `pyproject.toml`. Pyright has no formatter.
+- Python: Pyright uses the workspace's Python interpreter, the same one tests and the debugger use. Pick it in the **Python** card of the Language Servers view; see [testing.md](testing.md). Pyright has no formatter.
 - Rust: compiler errors come from `cargo check` after you save. Formatting needs `rustup component add rustfmt`. The workspace (or a direct sub-folder) needs a `Cargo.toml`.
 - Go to definition into files outside the workspace (TypeScript `lib.d.ts`, the Rust standard library, JDK classes) is not browsable yet. The Output panel says so.
 - Python is debuggable with debugpy ([debugging.md](debugging.md)); no debugger for TypeScript/JavaScript or Rust yet. pytest and `cargo test` run from the Testing view ([testing.md](testing.md)); so do Vitest and Jest.

@@ -7,6 +7,8 @@ import { LaunchConfig, SourceBreakpoint } from '@nova/ipc-contract';
 
 const WsSettings = z.object({
   javaHome: z.string().nullable().default(null),
+  /** Python interpreter chosen for this workspace (tests, debugger, Pyright); null = automatic. */
+  pythonPath: z.string().nullable().default(null),
   launchConfigs: z.array(LaunchConfig).default([]),
   breakpoints: z.record(z.string(), z.array(SourceBreakpoint)).default({}),
 });

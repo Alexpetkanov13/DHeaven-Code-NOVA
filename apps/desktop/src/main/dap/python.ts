@@ -43,7 +43,7 @@ export function probeDebugpy(python: string, cwd: string, timeoutMs = 20_000): P
   });
 }
 
-export interface PythonDeps { pythonFor(root: string): Promise<{ command: string; source: string }> }
+export interface PythonDeps { pythonFor(root: string): Promise<{ command: string; source: string; note?: string | null }> }
 
 /**
  * debugpy (installed by the user with pip, like the language servers: NOVA never downloads it). The adapter runs as
@@ -53,6 +53,7 @@ export interface PythonDeps { pythonFor(root: string): Promise<{ command: string
 export function pythonAdapter(d: PythonDeps): AdapterFactory {
   return async (cfg, { root, log, signal }) => {
     const py = await d.pythonFor(root);
+    if (py.note) log(py.note);
     const version = await probeDebugpy(py.command, root);
     log(`Python: ${py.command} (${py.source}) · debugpy ${version}`);
     if (signal.aborted) throw new Error('Cancelled');

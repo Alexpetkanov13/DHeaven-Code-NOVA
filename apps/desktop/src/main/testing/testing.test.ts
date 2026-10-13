@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverPytest, parsePytestXml, pytestArgs, pytestMissing, pythonFor, scanPytestSource } from './pytest';
+import { discoverPytest, parsePytestXml, pytestArgs, pytestMissing, scanPytestSource } from './pytest';
 import { cargoArgs, discoverCargo, modulePathOf, parseCargoOutput, scanRustTests } from './cargo';
 import { discoverAllTests, frameworksOf } from '.';
 
@@ -45,13 +45,6 @@ describe('pytest', () => {
     expect(pytestArgs('/w', [], '/t/x.xml')).toEqual(expect.arrayContaining(['junit_family=xunit1', '--junitxml=/t/x.xml', '--rootdir=/w']));
     expect(pytestMissing('/usr/bin/python3: No module named pytest\n', 'python3')).toMatch(/pytest is not installed for python3/);
     expect(pytestMissing('1 passed', 'python3')).toBeNull();
-  });
-  it('prefers a project virtualenv over PATH python', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-py-'));
-    expect((await pythonFor(root)).source).toBe('PATH');
-    const exe = process.platform === 'win32' ? path.join(root, '.venv', 'Scripts', 'python.exe') : path.join(root, '.venv', 'bin', 'python');
-    await fs.mkdir(path.dirname(exe), { recursive: true }); await fs.writeFile(exe, '');
-    expect(await pythonFor(root)).toEqual({ command: exe, source: 'virtualenv .venv' });
   });
 });
 
