@@ -90,7 +90,8 @@ test('explorer ops, watcher, search/replace, terminal, git stage+commit, trust',
   await expect(page.locator('.xterm')).toBeVisible();
   await page.locator('.xterm').click();
   await page.waitForTimeout(1500); // let the shell print its prompt
-  await page.keyboard.type('echo NOVA_$((6*7)) && pwd\n');
+  // Default shell: $SHELL on Unix, PowerShell on Windows.
+  await page.keyboard.type(process.platform === 'win32' ? 'echo "NOVA_$(6*7)"; pwd\n' : 'echo NOVA_$((6*7)) && pwd\n');
   await expect(page.locator('.xterm-rows')).toContainText('NOVA_42');
   await expect(page.locator('.xterm-rows')).toContainText(path.basename(ws));
   if (shots) await page.screenshot({ path: path.join(shots, 'nova-terminal.png') });
