@@ -261,3 +261,9 @@ Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabr
   - 38395239705: 15/15 passed (ai skipped).
   - 38395215112: 12/15. debug failed (the missing `exited`, handled in 08a69c6). Two `firstWindow` 30 s timeouts in tests.spec, cause not yet known.
 - CI 38395026239 (e876d74): ubuntu success, windows success. Release 38395026440: success.
+
+### Windows slow window-open (firstWindow timeouts)
+- Root cause (from NOVA_STARTUP_LOG phase timings): `installBundled` ran before `createWindow()` and took 19–84 s on a fresh Windows profile (copy + hash of bundled extensions under Defender scanning). Leftover electron/novad processes were seen but were not the cause.
+- Fix (720a56c): window is created first; bundled install runs in the background; `ext.*`, `template.*`, `workspace.*` and `trust.set.v1` IPC wait for it.
+- Verified: CI 38402340646 green (ubuntu+windows); 3/3 Windows diagnostic full E2E green (38402352176, 38402365681, 38402378799), 15/15 each.
+- Open: `.nova-servers` blobs from 9c390d8 remain in history (untracked in 18f6fb4); purging needs a history rewrite + force-push (awaiting approval).
