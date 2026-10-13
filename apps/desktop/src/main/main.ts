@@ -23,6 +23,7 @@ import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } f
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 import { detectProfiles, pickProfile } from './terminalProfiles';
+import * as gitCli from './git';
 import { ExtensionStore } from './ext/store';
 import { AiService } from './ai/service';
 import { KeyStore } from './ai/keys';
@@ -130,6 +131,12 @@ async function requireTrust() {
 function killAllPtys() { for (const id of ptys) void daemon.call('pty.kill', { ptyId: id }).catch(() => {}); ptys.clear(); }
 
 class AppError extends Error { constructor(public code: ErrorCode, m: string) { super(m); } }
+async function gitCall<T>(f: () => Promise<T>): Promise<T> {
+  try { return await f(); } catch (e) {
+    if (e instanceof gitCli.GitError) throw new AppError(e.code === 'DIRTY' ? 'GIT_DIRTY' : 'GIT_ERROR', e.message);
+    throw e;
+  }
+}
 
 async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   const abs = path.resolve(root);
@@ -205,6 +212,13 @@ const handlers: Handlers = {
   'git.show.v1': async ({ rel, rev }) => daemon.call('git.show', { root: needWs().root, path: rel, rev }),
   'git.stage.v1': async ({ rels }) => { await daemon.call('git.stage', { root: needWs().root, paths: rels }); return null; },
   'git.unstage.v1': async ({ rels }) => { await daemon.call('git.unstage', { root: needWs().root, paths: rels }); return null; },
+  // Branch/discard/sync run git with the user's config, hooks and credential helpers -> trust-gated, like commit.
+  'git.branches.v1': async () => gitCall(async () => gitCli.listBranches((await requireTrust()).root)),
+  'git.createBranch.v1': async ({ name, checkout }) => gitCall(async () => { await gitCli.createBranch((await requireTrust()).root, name, checkout); return null; }),
+  'git.switch.v1': async ({ name, allowDirty }) => gitCall(async () => { await gitCli.switchBranch((await requireTrust()).root, name, { allowDirty }); return null; }),
+  'git.discard.v1': async ({ rels }) => gitCall(async () => { await gitCli.discard((await requireTrust()).root, rels); return null; }),
+  'git.sync.v1': async ({ op }) => gitCall(async () => ({ output: gitCli.redact(await gitCli.sync((await requireTrust()).root, op)) })),
+  'git.tracking.v1': async () => gitCall(async () => gitCli.tracking((await requireTrust()).root)),
   'git.commit.v1': async ({ message }) => daemon.call('git.commit', { root: (await requireTrust()).root, message }), // hooks run -> trust required
   'trust.get.v1': async () => ({ trusted: await trust.isTrusted(needWs().root) }),
   'trust.set.v1': async ({ trusted: t }) => { const ws = needWs(); await trust.set(ws.root, t); wsTrusted = t; if (t) void exts.fire('onStartupFinished'); if (!t) { await exts.stopAll(); killAllPtys(); killAllGradle(); await dbg.stop('Workspace trust revoked'); await lsp.stopAll(); await lsp.setWorkspace(ws.root); } return { trusted: t }; },

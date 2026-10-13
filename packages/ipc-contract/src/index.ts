@@ -197,6 +197,12 @@ export const channels = {
   'git.show.v1': def(z.object({ rel: RelPath, rev: z.enum(['HEAD', 'INDEX']) }), z.object({ content: z.string() })),
   'git.stage.v1': def(z.object({ rels: z.array(RelPath).min(1).max(5000) }), z.null()),
   'git.unstage.v1': def(z.object({ rels: z.array(RelPath).min(1).max(5000) }), z.null()),
+  'git.branches.v1': def(z.object({}), z.array(z.object({ name: z.string(), current: z.boolean(), remote: z.boolean(), upstream: z.string().nullable() }))),
+  'git.createBranch.v1': def(z.object({ name: z.string().min(1).max(250), checkout: z.boolean() }), z.null()),
+  'git.switch.v1': def(z.object({ name: z.string().min(1).max(250), allowDirty: z.boolean() }), z.null()),
+  'git.discard.v1': def(z.object({ rels: z.array(RelPath).min(1).max(5000) }), z.null()),
+  'git.sync.v1': def(z.object({ op: z.enum(['fetch', 'pull', 'push']) }), z.object({ output: z.string() })),
+  'git.tracking.v1': def(z.object({}), z.object({ branch: z.string().nullable(), upstream: z.string().nullable(), ahead: z.number(), behind: z.number() })),
   'git.commit.v1': def(z.object({ message: z.string().min(1).max(100000) }), z.object({ commit: z.string() })),
   'trust.get.v1': def(z.object({}), z.object({ trusted: z.boolean() })),
   'trust.set.v1': def(z.object({ trusted: z.boolean() }), z.object({ trusted: z.boolean() })),
@@ -290,7 +296,7 @@ export type ChannelName = keyof Channels;
 export type Req<C extends ChannelName> = z.input<Channels[C]['req']>;
 export type Res<C extends ChannelName> = z.output<Channels[C]['res']>;
 
-export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'AI_ERROR', 'TEMPLATE_ERROR', 'INTERNAL']);
+export const ErrorCode = z.enum(['INVALID_REQUEST', 'UNKNOWN_CHANNEL', 'NO_WORKSPACE', 'PATH_OUTSIDE_WORKSPACE', 'NOT_FOUND', 'EXISTS', 'CONFLICT', 'UNTRUSTED', 'DAEMON_UNAVAILABLE', 'TRASH_FAILED', 'LSP_ERROR', 'TOO_LARGE', 'EXT_ERROR', 'AI_ERROR', 'TEMPLATE_ERROR', 'GIT_ERROR', 'GIT_DIRTY', 'INTERNAL']);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 export type Envelope<T> = { ok: true; result: T } | { ok: false; error: { code: ErrorCode; message: string } };

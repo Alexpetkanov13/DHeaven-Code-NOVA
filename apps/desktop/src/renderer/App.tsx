@@ -8,6 +8,7 @@ import { SettingsView } from './components/SettingsView';
 import { Splitter } from './components/Splitter';
 import { SearchView } from './components/SearchView';
 import { ScmView } from './components/ScmView';
+import { GitTrackingItem } from './components/GitTrackingItem';
 import { TerminalPanel } from './components/TerminalPanel';
 import { ConfirmBox, ContextMenu, InputBox, type MenuItem } from './components/InputBox';
 import { parentOf, joinRel, joinAbs, uriToRel } from './lib/paths';
@@ -685,6 +686,7 @@ export function App() {
         <span>{ws ? ws.name : 'No folder'}</span>
         {ws && <span>{trusted ? 'Trusted' : 'Restricted'}</span>}
         <span title="Native daemon">novad: {daemon}</span>
+        {ws && trusted && <GitTrackingItem refreshKey={scmKey} />}
         <span className="grow" />
         {extClient.status.filter((s) => s.visible).map((s) => s.command
           ? <button key={s.key} className="status-item" data-ext-status={s.key} title={s.tooltip} onClick={() => runExt(s.command!)}>{s.text}</button>
