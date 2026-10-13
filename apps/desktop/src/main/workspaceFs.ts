@@ -1,3 +1,4 @@
+import { renameRetry } from './fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { DirEntry } from '@nova/ipc-contract';
@@ -79,7 +80,7 @@ export async function renameEntry(root: string, from: string, to: string) {
   // allow case-only renames on case-insensitive filesystems
   if (exists && a.toLowerCase() !== b.toLowerCase()) throw new ExistsError(`${to} already exists`);
   await fs.mkdir(path.dirname(b), { recursive: true });
-  await fs.rename(a, b);
+  await renameRetry(a, b);
   return { rel: toRel(root, b) };
 }
 
@@ -87,7 +88,7 @@ export async function deleteEntry(root: string, rel: string, permanent: boolean,
   if (!rel) throw new FsError('NOT_FOUND', 'Cannot delete workspace root');
   const abs = await resolveInsideReal(root, rel);
   await fs.lstat(abs).catch(() => { throw new FsError('NOT_FOUND', `Not found: ${rel}`); });
-  if (permanent) { await fs.rm(abs, { recursive: true, force: false }); return { trashed: false }; }
+  if (permanent) { await fs.rm(abs, { recursive: true, force: false, maxRetries: 10, retryDelay: 100 }); return { trashed: false }; }
   try { await trash(abs); } catch (e) { throw new TrashError(`Could not move to trash: ${e instanceof Error ? e.message : e}`); }
   return { trashed: true };
 }

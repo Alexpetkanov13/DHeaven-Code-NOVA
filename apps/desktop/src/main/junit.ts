@@ -1,3 +1,4 @@
+import { rmRetry } from './fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -100,8 +101,8 @@ export async function readResults(root: string): Promise<TestCase[]> {
 }
 
 export async function clearResults(root: string) {
-  await fs.rm(path.join(root, 'build', 'test-results'), { recursive: true, force: true });
-  try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) await fs.rm(path.join(root, e.name, 'build', 'test-results'), { recursive: true, force: true }); } catch { /* ignore */ }
+  await rmRetry(path.join(root, 'build', 'test-results'));
+  try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) await rmRetry(path.join(root, e.name, 'build', 'test-results')); } catch { /* ignore */ }
 }
 
 /** Gradle args for running tests. `--rerun` (Gradle ≥7.6) forces execution even when the task is up to date. */

@@ -1,3 +1,4 @@
+import { rmRetry } from '../fsRetry';
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -36,7 +37,7 @@ export async function installServer(def: Installable, serversDir: string, fetchF
     const digest = h.digest('hex');
     if (digest !== def.download.sha256) throw new Error(`SHA-256 mismatch: expected ${def.download.sha256}, got ${digest}`);
     onProgress(`Verified SHA-256 (${(n / 1e6).toFixed(1)} MB). Extracting…`);
-    await fs.rm(dest, { recursive: true, force: true });
+    await rmRetry(dest);
     await fs.mkdir(dest, { recursive: true });
     if (def.download.kind === 'jar') await fs.copyFile(file, path.join(dest, path.basename(new URL(def.download.url).pathname)));
     else if (def.download.kind === 'tar.gz') await run('tar', ['-xzf', file, '-C', dest], tmp);
@@ -44,6 +45,6 @@ export async function installServer(def: Installable, serversDir: string, fetchF
     else await run('unzip', ['-q', '-o', file, '-d', dest], tmp);
     onProgress(`Installed ${def.name} ${def.version}`);
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await rmRetry(tmp);
   }
 }

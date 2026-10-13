@@ -1,3 +1,4 @@
+import { renameRetry, rmRetry } from '../fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -84,10 +85,10 @@ export class ExtensionStore {
     const final = this.dirOf(id, manifest.version);
     const tmp = path.join(this.root, id, `.tmp-${manifest.version}-${Date.now()}`);
     await fs.mkdir(path.dirname(tmp), { recursive: true });
-    try { await writeFiles(tmp, p.files); } catch (e) { await fs.rm(tmp, { recursive: true, force: true }); throw e; }
+    try { await writeFiles(tmp, p.files); } catch (e) { await rmRetry(tmp); throw e; }
     let backup: string | null = null;
-    if (await fs.stat(final).then(() => true, () => false)) { backup = `${final}.bak-${Date.now()}`; await fs.rename(final, backup); } // reinstall same version
-    try { await fs.rename(tmp, final); } catch (e) { if (backup) await fs.rename(backup, final); await fs.rm(tmp, { recursive: true, force: true }); throw e; }
+    if (await fs.stat(final).then(() => true, () => false)) { backup = `${final}.bak-${Date.now()}`; await renameRetry(final, backup); } // reinstall same version
+    try { await renameRetry(tmp, final); } catch (e) { if (backup) await renameRetry(backup, final); await rmRetry(tmp); throw e; }
     const previous = cur && cur.version !== manifest.version ? cur.version : cur?.previous ?? null;
     this.state.extensions[id] = {
       version: manifest.version, enabled: cur?.enabled ?? true, previous, quarantined: null, grants: cur?.grants ?? {}, config: cur?.config ?? {}, state: cur?.state ?? {},
@@ -95,9 +96,9 @@ export class ExtensionStore {
     };
     try { await this.save(); } catch (e) { // roll back on-disk switch
       if (cur) this.state.extensions[id] = cur; else delete this.state.extensions[id];
-      await fs.rm(final, { recursive: true, force: true }); if (backup) await fs.rename(backup, final); throw e;
+      await rmRetry(final); if (backup) await renameRetry(backup, final); throw e;
     }
-    if (backup) await fs.rm(backup, { recursive: true, force: true });
+    if (backup) await rmRetry(backup);
     await this.gc(id);
     return { id, dir: final, manifest, entry: this.state.extensions[id]! };
   }
@@ -116,12 +117,12 @@ export class ExtensionStore {
   private async gc(id: string) {
     const e = this.state.extensions[id]; if (!e) return;
     const keep = new Set([e.version, e.previous].filter(Boolean) as string[]);
-    for (const d of await fs.readdir(path.join(this.root, id)).catch(() => [] as string[])) if (!keep.has(d)) await fs.rm(path.join(this.root, id, d), { recursive: true, force: true });
+    for (const d of await fs.readdir(path.join(this.root, id)).catch(() => [] as string[])) if (!keep.has(d)) await rmRetry(path.join(this.root, id, d));
   }
   async uninstall(id: string) {
     if (!this.state.extensions[id]) throw new Error(`Not installed: ${id}`);
     delete this.state.extensions[id]; await this.save();
-    await fs.rm(path.join(this.root, id), { recursive: true, force: true });
+    await rmRetry(path.join(this.root, id));
   }
   async update(id: string, patch: Partial<Pick<StoreEntry, 'enabled' | 'quarantined' | 'grants' | 'config' | 'state'>>) {
     const e = this.state.extensions[id]; if (!e) throw new Error(`Not installed: ${id}`);

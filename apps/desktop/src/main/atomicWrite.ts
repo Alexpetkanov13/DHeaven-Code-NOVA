@@ -1,3 +1,4 @@
+import { renameRetry } from './fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -20,7 +21,7 @@ export async function atomicWrite(target: string, data: string): Promise<void> {
     await fh.close();
   }
   try {
-    await fs.rename(tmp, target);
+    await renameRetry(tmp, target);
   } catch (e) {
     await fs.rm(tmp, { force: true });
     throw e;
