@@ -181,3 +181,22 @@ Phase 1 E2E (open/edit/save/relaunch/recent, security asserts) re-run with Slice
 
 ## Next slice
 Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabric runClient verification on a desktop, Skript validation via an addon-aware parser, YAML hover. AI: inline completions, codebase retrieval with the same exclusion rules, multi-file edit proposals, E2E for the remaining AI actions and a real keyring (Windows/macOS CI). Extensions: publisher signing for `.novaext`, per-extension hosts or an OS-level sandbox (seccomp / AppContainer) to make network restriction real, keybinding + richer `when` contributions, webview-free custom editors, extension-provided language servers; plus the Phase 4 items: Windows CI (build novad + NSIS/portable; unit + E2E incl. JDT LS/java-debug/Gradle on windows-latest), exception breakpoints + hover evaluate + hot code replace, breakpoint line tracking on edits, JDT-based test discovery (`vscode.java.test` / nested + dynamic tests), Maven support, server-initiated applyEdit, jdt:// class-file viewer, multiple terminal tabs, Git branch/discard.
+
+## CI / Windows (GitHub Actions)
+
+- Repo (private): https://github.com/Alexpetkanov13/DHeaven-Code-NOVA
+- `ci.yml`: matrix of ubuntu-latest and windows-latest. Steps: pnpm install, Rust (cargo test), typecheck, lint, unit tests, build, JDK 21 (+25), provisioning of jdtls / kotlin-ls / java-debug (pinned SHA-256, cached in `.nova-servers`), then Playwright Electron E2E (xvfb on Linux, direct on Windows).
+- `windows-release.yml`: builds unsigned NSIS setup, portable and zip, writes SHA256SUMS.txt, and `scripts/verify-artifacts.mjs` checks that `dheaven-code-nova.exe` and `resources/novad.exe` are inside the zip. Output is uploaded as the artifact `DHeaven-Code-NOVA-windows-x64-unsigned`. No public release is made.
+- Linux E2E is a hard gate: 13 passed. 1 skipped: AI, because no Ollama runs on CI.
+- kotlin-ls quality checks are best-effort annotations. On CI it reports "Unresolved reference: println" because the stdlib is not resolved.
+- Windows fixes so far:
+  - Absolute file URIs in the LSP test.
+  - The exec-bit test is skipped on win32.
+  - `JAVA_HOME_<N>_X64` JDK discovery.
+  - A race in the extension DENIED test.
+  - The app's process tree is killed (`taskkill /T /F`) when `app.close()` hangs.
+- Windows E2E is **informational** (`continue-on-error`, 45-minute global timeout).
+  - Known gaps: debug, extension install/hang, java, kotlin, slice2 (terminal/git/explorer), test discovery/debug.
+  - The worker teardown hung because java/LSP children kept Electron alive.
+  - Passing on Windows: extension permissions, gradle, minecraft, tests (no-fail variant).
+  - Traces are uploaded as `e2e-results-windows-latest`.
