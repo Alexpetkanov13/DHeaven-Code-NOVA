@@ -23,6 +23,7 @@ export interface DebugDeps {
 }
 
 /** Requests the renderer may forward to the adapter (everything else is refused). */
+export const EXEC_COMMANDS = new Set(['continue', 'next', 'stepIn', 'stepOut']);
 export const DAP_ALLOWED = new Set(['threads', 'stackTrace', 'scopes', 'variables', 'continue', 'next', 'stepIn', 'stepOut', 'pause', 'evaluate', 'source', 'setVariable', 'exceptionInfo']);
 
 export class DebugManager {
@@ -30,6 +31,7 @@ export class DebugManager {
   private conn: DapConnection | null = null;
   private abort: AbortController | null = null;
   private seq = 0;
+  private stopSeq = 0;
   private status: DebugStatus = { sessionId: 0, state: 'idle', reason: null, threadId: null, configName: null, capabilities: {} };
   breakpoints: Record<string, SourceBreakpoint[]> = {};
   private verified: Record<string, { line: number; verified: boolean; message?: string }[]> = {};
@@ -78,7 +80,7 @@ export class DebugManager {
         if (this.status.sessionId !== sessionId) return;
         if (event === 'initialized') initialized();
         else if (event === 'output') { this.deps.emit('debug.output.v1', { sessionId, category: (body.category as string) ?? 'console', output: String(body.output ?? '') }); return; }
-        else if (event === 'stopped') this.set({ state: 'stopped', reason: String(body.reason ?? 'paused'), threadId: (body.threadId as number) ?? null });
+        else if (event === 'stopped') { this.stopSeq++; this.set({ state: 'stopped', reason: String(body.reason ?? 'paused'), threadId: (body.threadId as number) ?? null }); }
         else if (event === 'continued') this.set({ state: 'running', reason: null, threadId: null });
         else if (event === 'terminated' || event === 'exited') {
           if (event === 'exited') this.log(`Process exited with code ${body.exitCode}`);
@@ -143,7 +145,15 @@ export class DebugManager {
   async request(sessionId: number, command: string, args: unknown): Promise<unknown> {
     if (!DAP_ALLOWED.has(command)) throw new Error(`DAP command not allowed: ${command}`);
     if (sessionId !== this.status.sessionId || !this.conn) throw new DapError(command, 'No active debug session');
-    return this.conn.request(command, args, command === 'evaluate' ? 15_000 : 30_000);
+    if (!EXEC_COMMANDS.has(command)) return this.conn.request(command, args, command === 'evaluate' ? 15_000 : 30_000);
+    // Execution control: a step's response arrives before its 'stopped' event, and java-debug does not always send
+    // 'continued'. Mark the session running as soon as the adapter accepts the command (unless a newer stop already
+    // arrived), so the UI cannot send Continue into a step that is still in flight (java-debug drops it).
+    if (this.status.state !== 'stopped') throw new DapError(command, 'The debuggee is not paused');
+    const seq = this.stopSeq;
+    const r = await this.conn.request(command, args, 30_000);
+    if (this.status.sessionId === sessionId && this.stopSeq === seq && this.status.state === 'stopped') this.set({ state: 'running', reason: null, threadId: null });
+    return r;
   }
 
   async stop(reason = 'Stopped by user') {

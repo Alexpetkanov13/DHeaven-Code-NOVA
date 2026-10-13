@@ -22,6 +22,8 @@ function fakeAdapter(behaviour: { crashAfterLaunch?: boolean }) {
           case 'configurationDone': ok(); setTimeout(() => send({ type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } }), 20); break;
           case 'threads': ok({ threads: [{ id: 1, name: 'main' }] }); break;
           case 'evaluate': send({ type: 'response', request_seq: m.seq, command: m.command, success: false, message: 'boom' }); break;
+          case 'stepOut': ok(); setTimeout(() => send({ type: 'event', event: 'stopped', body: { reason: 'step', threadId: 1 } }), 150); break;
+          case 'continue': ok({ allThreadsContinued: true }); break; // like java-debug: no 'continued' event
           case 'disconnect': ok(); sock.end(); break;
           default: ok();
         }
@@ -45,6 +47,23 @@ const until = async (pred: () => boolean) => { const end = Date.now() + 5000; wh
 const cfg = { id: '1', name: 'x', type: 'java' as const, request: 'launch' as const };
 
 describe('DebugManager', () => {
+  it('execution control: running while a step is in flight, Continue refused until its stop arrives, no continued event needed', async () => {
+    const { port, server, got } = await fakeAdapter({});
+    const { dbg } = mk(port);
+    await dbg.setWorkspace('/w');
+    const sid = await dbg.start(cfg);
+    await until(() => dbg.getStatus().state === 'stopped');
+    await dbg.request(sid, 'stepOut', { threadId: 1 });
+    expect(dbg.getStatus().state).toBe('running');
+    await expect(dbg.request(sid, 'continue', { threadId: 1 })).rejects.toThrow('not paused');
+    await until(() => dbg.getStatus().state === 'stopped');
+    expect(dbg.getStatus().reason).toBe('step');
+    await dbg.request(sid, 'continue', { threadId: 1 });
+    expect(dbg.getStatus().state).toBe('running');
+    expect(got.filter((c) => c === 'continue')).toHaveLength(1);
+    await dbg.stop(); server.close();
+  });
+
   it('handshake, breakpoints (capability-filtered), stopped event, allowlist, adapter errors', async () => {
     const { port, server, got } = await fakeAdapter({});
     const { dbg } = mk(port);
