@@ -234,3 +234,14 @@ Minecraft: Fabric template for 1.21.x (mappings), Forge/NeoForge templates, Fabr
   - Every new channel is trust-gated (hooks and credential helpers execute).
   - Tests: `git.test.ts` (bare remote, two clones, redaction) and `e2e/git.spec.ts` (local bare remote; push, fetch, pull, dirty switch, discard).
 - Screenshots: `/workspace/nova-terminals.png`, `/workspace/nova-git-branches.png`.
+
+### Windows reliability, status as of f58715b
+- 3× full Windows diagnostic runs on 246e30e (38386728955 / 38386741036 / 38386752833): 14/15, 12/15, 14/15 passed (ai skipped).
+  - Failing in all three: tests "debug a single test". startDebugSession timed out; fixed in f756d09 (120 s + retry).
+  - debug spec (1 of 3): the Continue race persists on Windows. `stopped` stays after Continue; root cause still open.
+  - workbench (1 of 3): firstWindow timeout after a failed debug spec (cascade).
+- Re-run 38391144517 (debug + tests only, f756d09): debug failed (Continue race again) and tests "run one" failed (Exit 1, no results). This is an open Windows flake. Run-one output is now printed on failure for diagnosis.
+- CI 38391129158 (f756d09): failed.
+  - Linux: the terminals spec failed because of reordered keystrokes; fixed in f58715b (writes serialized).
+  - Windows: failed on the E2E flakes above.
+- **Windows E2E is currently NOT reliably green.** The step stays blocking, so CI is red until the debug Continue race and the tests run-one flake are fixed.
