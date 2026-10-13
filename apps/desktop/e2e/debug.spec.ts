@@ -71,8 +71,12 @@ test('debug: breakpoint hit, local variable, watch + console evaluate, step, con
   await expect(state(page)).toHaveAttribute('data-debug-state', 'stopped');
   await page.getByRole('button', { name: 'Step Out' }).click(); // back in App.main
   await expect(page.getByLabel('Call stack').locator('.frame').first()).toContainText('main', { timeout: 30_000 });
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(state(page)).toHaveAttribute('data-debug-state', 'terminated', { timeout: 60_000 });
+  // After Step Out the adapter may still be settling the new stop (slow on Windows); a Continue sent in that
+  // window is dropped by java-debug, so re-issue it until the session actually leaves 'stopped'.
+  await expect(async () => {
+    if ((await state(page).getAttribute('data-debug-state')) === 'stopped') await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(state(page)).toHaveAttribute('data-debug-state', 'terminated', { timeout: 10_000 });
+  }).toPass({ timeout: 90_000 });
   await expect(page.getByLabel('Debug Console')).toContainText('Hello, NOVA!');
   await expect(page.getByLabel('Debug Console')).toContainText('exited with code 0');
   await closeApp(app);
