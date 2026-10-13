@@ -35,6 +35,19 @@ export async function findExecutable(names: string[], env: NodeJS.ProcessEnv = p
   return null;
 }
 
+/**
+ * The executable's own directory goes first on PATH. npm/nvm/fnm/Volta install `node` next to their global shims, and
+ * shims start with `#!/usr/bin/env node` (or look for node on PATH on Windows). A GUI-launched app often lacks those
+ * directories on PATH, so without this a server the user picked could not start. On Windows the variable may be
+ * spelled `Path`, so it is matched case-insensitively.
+ */
+export function withExeDirOnPath(exe: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const dir = path.dirname(exe);
+  const cur = env[key] ?? '';
+  return { ...env, [key]: cur.split(path.delimiter).includes(dir) ? cur : dir + (cur ? path.delimiter + cur : '') };
+}
+
 /** Characters that cmd.exe would interpret inside a command line; a path containing them is refused rather than escaped. */
 const CMD_UNSAFE = /["%^&|<>!\r\n]/;
 
@@ -42,7 +55,8 @@ const CMD_UNSAFE = /["%^&|<>!\r\n]/;
  * Launch spec for an external executable. Windows .cmd/.bat shims (npm-installed servers) cannot be spawned
  * directly (Node refuses since CVE-2024-27980), so they run through cmd.exe with verbatim, fully quoted arguments.
  */
-export function externalLaunch(exe: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): LaunchSpec {
+export function externalLaunch(exe: string, args: string[], cwd: string, baseEnv: NodeJS.ProcessEnv = process.env): LaunchSpec {
+  const env = withExeDirOnPath(exe, baseEnv);
   if (isWin && /\.(cmd|bat)$/i.test(exe)) {
     for (const s of [exe, ...args]) if (CMD_UNSAFE.test(s)) throw new Error(`Refusing to run through cmd.exe: unsafe characters in ${JSON.stringify(s)}`);
     const line = [exe, ...args].map((s) => `"${s}"`).join(' ');

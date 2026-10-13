@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { externalLaunch, findExecutable, probeExecutable } from './discover';
+import { externalLaunch, findExecutable, probeExecutable, withExeDirOnPath } from './discover';
 import { LspManager } from './manager';
 import { fileUri } from './uri';
 import type { ServerDef } from './registry';
@@ -45,6 +45,16 @@ describe('external server discovery', () => {
     const hang = await shim(dir, 'hang', { sh: 'sleep 30', cmd: 'ping -n 30 127.0.0.1 >nul' });
     await expect(probeExecutable(hang, ['--version'], 500)).rejects.toThrow(/did not finish/);
   }, 30_000);
+  it('puts the executable\'s directory first on PATH (npm shims need the node next to them), once, keeping the key\'s spelling', () => {
+    const exe = path.join(path.sep, 'opt', 'node', 'bin', 'pyright-langserver');
+    const dir = path.dirname(exe);
+    expect(withExeDirOnPath(exe, { PATH: '/usr/bin' }).PATH).toBe(dir + path.delimiter + '/usr/bin');
+    expect(withExeDirOnPath(exe, { PATH: dir + path.delimiter + '/usr/bin' }).PATH).toBe(dir + path.delimiter + '/usr/bin');
+    const w = withExeDirOnPath(exe, { Path: 'C:\\Windows' });
+    expect(Object.keys(w)).toEqual(['Path']);
+    expect(w.Path).toBe(dir + path.delimiter + 'C:\\Windows');
+    expect(withExeDirOnPath(exe, {}).PATH).toBe(dir);
+  });
   it.runIf(isWin)('runs .cmd shims through cmd.exe with quoted verbatim args and refuses cmd metacharacters', () => {
     const s = externalLaunch('C:\\Program Files\\npm\\tsls.cmd', ['--stdio'], 'C:\\w');
     expect(s.windowsVerbatimArguments).toBe(true);
