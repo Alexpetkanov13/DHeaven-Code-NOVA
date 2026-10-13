@@ -84,7 +84,7 @@ export class DebugManager {
         else if (event === 'continued') this.set({ state: 'running', reason: null, threadId: null });
         else if (event === 'terminated' || event === 'exited') {
           if (event === 'exited') this.log(`Process exited with code ${body.exitCode}`);
-          if (event === 'terminated') { this.set({ state: 'terminated', reason: 'Debuggee terminated', threadId: null }); conn.close('terminated'); }
+          if (event === 'terminated') { this.set({ state: 'terminated', reason: 'Debuggee terminated', threadId: null }); setTimeout(() => conn.close('terminated'), 1000); } // java-debug may send 'exited' (and trailing output) after 'terminated'
         } else if (event === 'breakpoint') this.onBreakpointEvent(body);
         this.deps.emit('debug.event.v1', { sessionId, event, body });
       });

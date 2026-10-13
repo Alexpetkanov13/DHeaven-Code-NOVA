@@ -60,6 +60,7 @@ test('tests: discovery, run all with real pass/fail/skip counts, details, rerun 
   await node(page, 'com.dheaven.demo.MathTest.addition').hover();
   await node(page, 'com.dheaven.demo.MathTest.addition').getByTitle('Run').click();
   await waitDone(page);
+  if (!(await summary(page).innerText()).includes('Exit 0')) console.log('[tests run-one] output:\n' + (await page.getByLabel('Test output').innerText()).slice(-4000));
   await expect(summary(page)).toContainText('Exit 0');
   await expect(node(page, 'com.dheaven.demo.MathTest.addition')).toHaveAttribute('data-status', 'passed');
   await closeApp(app);

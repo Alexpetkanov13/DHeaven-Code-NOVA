@@ -106,6 +106,9 @@ export async function readResults(root: string, since = 0): Promise<TestCase[]> 
 }
 
 export async function clearResults(root: string) {
+  // Windows: the Gradle daemon can still hold result files of the previous run; deleting under it breaks the next
+  // run (exit 1, no results). Gradle replaces the files itself and readResults(since) ignores stale ones.
+  if (process.platform === 'win32') return;
   await rmRetry(path.join(root, 'build', 'test-results')).catch(() => {});
   try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) await rmRetry(path.join(root, e.name, 'build', 'test-results')).catch(() => {}); } catch { /* ignore */ }
 }
