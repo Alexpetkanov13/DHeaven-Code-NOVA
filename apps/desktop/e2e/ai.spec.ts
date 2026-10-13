@@ -1,8 +1,9 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+autoClose();
 
 /** Runs against a REAL local model served by Ollama (default http://127.0.0.1:11434, model qwen2.5-coder:0.5b). */
 const appDir = path.resolve(__dirname, '..');

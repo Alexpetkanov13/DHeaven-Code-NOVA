@@ -1,9 +1,10 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+autoClose();
 
 const appDir = path.resolve(__dirname, '..');
 const repo = path.resolve(appDir, '../..');

@@ -1,8 +1,9 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+autoClose();
 
 const appDir = path.resolve(__dirname, '..');
 const shot = process.env.NOVA_SHOT_DIR;

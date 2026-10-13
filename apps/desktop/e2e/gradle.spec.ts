@@ -1,8 +1,9 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+autoClose();
 
 const appDir = path.resolve(__dirname, '..');
 const fixture = path.resolve(appDir, '../../fixtures/java-gradle');

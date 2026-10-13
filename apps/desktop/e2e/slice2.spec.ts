@@ -1,9 +1,10 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+autoClose();
 
 const appDir = path.resolve(__dirname, '..');
 const fixture = path.resolve(appDir, '../../fixtures/sample-workspace');

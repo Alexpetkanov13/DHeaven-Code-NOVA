@@ -1,8 +1,9 @@
-import { closeApp } from './closeApp';
+import { autoClose, closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+autoClose();
 
 // Best-effort: fwcd/kotlin-language-server lags Kotlin 2.x. Hard asserts cover what NOVA controls
 // (start, capability negotiation, sync); server-quality checks are soft and reported in the log.
