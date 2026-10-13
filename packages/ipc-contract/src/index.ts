@@ -33,6 +33,7 @@ export const Settings = z.object({
   panelHeight: z.number().int().min(80).max(800).default(180),
   javaHome: z.string().max(4096).nullable().default(null),
   colorTheme: z.string().max(256).default('nova-dark'),
+  terminalProfile: z.string().max(64).nullable().default(null),
 });
 export type Settings = z.infer<typeof Settings>;
 export const SettingsPatch = Settings.partial().omit({ version: true });
@@ -187,7 +188,8 @@ export const channels = {
     z.object({ query: z.string().min(1).max(1000), isRegex: z.boolean(), caseSensitive: z.boolean(), replacement: z.string().max(10000), rels: z.array(RelPath).max(5000) }),
     z.object({ files: z.number(), replacements: z.number() }),
   ),
-  'terminal.spawn.v1': def(z.object({ cols: z.number().int().min(2).max(1000), rows: z.number().int().min(2).max(1000) }), z.object({ ptyId: z.number() })),
+  'terminal.profiles.v1': def(z.object({}), z.object({ profiles: z.array(z.object({ id: z.string(), name: z.string() })), defaultId: z.string().nullable() })),
+  'terminal.spawn.v1': def(z.object({ cols: z.number().int().min(2).max(1000), rows: z.number().int().min(2).max(1000), profileId: z.string().max(64).optional() }), z.object({ ptyId: z.number(), profileId: z.string().nullable(), profileName: z.string().nullable() })),
   'terminal.write.v1': def(z.object({ ptyId: z.number(), data: z.string().max(1024 * 1024) }), z.null()),
   'terminal.resize.v1': def(z.object({ ptyId: z.number(), cols: z.number().int().min(2).max(1000), rows: z.number().int().min(2).max(1000) }), z.null()),
   'terminal.kill.v1': def(z.object({ ptyId: z.number() }), z.null()),

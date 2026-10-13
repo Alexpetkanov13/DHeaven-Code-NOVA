@@ -22,6 +22,7 @@ import { JAVA_DEBUG, javaAdapter } from './dap/java';
 import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
+import { detectProfiles, pickProfile } from './terminalProfiles';
 import { ExtensionStore } from './ext/store';
 import { AiService } from './ai/service';
 import { KeyStore } from './ai/keys';
@@ -186,11 +187,16 @@ const handlers: Handlers = {
   },
   'search.cancel.v1': async ({ searchId }) => { await daemon.call('search.cancel', { searchId }); return null; },
   'replace.apply.v1': async (p) => applyReplace(needWs().root, p.rels, p.query, p.isRegex, p.caseSensitive, p.replacement),
-  'terminal.spawn.v1': async ({ cols, rows }) => {
+  'terminal.profiles.v1': async () => {
+    const profiles = detectProfiles();
+    return { profiles: profiles.map(({ id, name }) => ({ id, name })), defaultId: pickProfile(profiles, null, (await store.getSettings()).terminalProfile)?.id ?? null };
+  },
+  'terminal.spawn.v1': async ({ cols, rows, profileId }) => {
     const ws = await requireTrust();
-    const r = await daemon.call<{ ptyId: number }>('pty.spawn', { cwd: ws.root, cols, rows });
+    const prof = pickProfile(detectProfiles(), profileId, (await store.getSettings()).terminalProfile);
+    const r = await daemon.call<{ ptyId: number }>('pty.spawn', { cwd: ws.root, cols, rows, shell: prof?.path });
     ptys.add(r.ptyId);
-    return r;
+    return { ptyId: r.ptyId, profileId: prof?.id ?? null, profileName: prof?.name ?? null };
   },
   'terminal.write.v1': async ({ ptyId, data }) => { if (!ptys.has(ptyId)) throw new AppError('NOT_FOUND', 'No such terminal'); await daemon.call('pty.write', { ptyId, data }); return null; },
   'terminal.resize.v1': async ({ ptyId, cols, rows }) => { if (ptys.has(ptyId)) await daemon.call('pty.resize', { ptyId, cols, rows }); return null; },

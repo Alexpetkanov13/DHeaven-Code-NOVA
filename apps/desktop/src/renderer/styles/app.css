@@ -256,3 +256,10 @@ pre.panel-body { margin: 0; white-space: pre-wrap; font-family: var(--nova-font-
 .mc-task .ok { color: #7CF2C1; } .mc-task .warn { color: #FFC66D; }
 .mc-run { padding: 6px 10px; } .mc-run .gradle-out { max-height: 260px; overflow: auto; font-size: 11px; white-space: pre-wrap; }
 .mc-console input { width: 100%; margin-top: 4px; background: var(--nova-navy-800, #111a33); color: inherit; border: 1px solid var(--nova-border); border-radius: 5px; padding: 3px 6px; font-family: monospace; }
+.term-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.term-bar { flex-wrap: wrap; }
+.term-tabs { display: flex; gap: 4px; }
+.term-split { flex: 1; min-height: 0; gap: 4px; }
+.term-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid transparent; border-radius: 4px; }
+.term-pane.active { border-color: var(--nova-accent, #3FE0FF); }
+.term-pane-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--nova-text-dim); padding: 0 6px; }
