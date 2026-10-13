@@ -34,6 +34,8 @@ import { MinecraftView } from './components/MinecraftView';
 import { NavHistory } from './lib/navHistory';
 import { flatten, symbolPathAt, type Sym } from './lib/outline';
 import type { PickerOptions } from './components/CommandPalette';
+import { EditorPane } from './components/EditorPane';
+import { closeIn, emptyLayout, fromSaved, moveTab, openIn, reconcile, split, toSaved, type Layout } from './lib/layout';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
 interface Tab { rel: string; model: monaco.editor.ITextModel; savedAltId: number; mtimeMs: number; disk: DiskState }
@@ -79,9 +81,16 @@ export function App() {
   const [toasts, setToasts] = useState<{ id: number; text: string; level: string }[]>([]);
   const [, extBump] = useState(0);
   const [, bump] = useState(0);
-  const hostRef = useRef<HTMLDivElement>(null);
   const diffHostRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null); // editor of the focused group
+  const editorsRef = useRef(new Map<number, monaco.editor.IStandaloneCodeEditor>()); // by group id
+  const [editorsVer, setEditorsVer] = useState(0);
+  const [layout, setLayout] = useState<Layout>(emptyLayout);
+  const layoutRef = useRef(layout); layoutRef.current = layout;
+  editorRef.current = editorsRef.current.get(layout.groups[layout.activeGroup]?.id ?? -1) ?? null;
+  const pendingRename = useRef<((rel: string) => string) | null>(null);
+  const layoutRestored = useRef<string | null>(null);
+  const [dropGroup, setDropGroup] = useState<number | null>(null);
   const diffEdRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const tabsRef = useRef(tabs); tabsRef.current = tabs;
   const activeRef = useRef(active); activeRef.current = active;
@@ -151,7 +160,7 @@ export function App() {
     if (!info) return;
     for (const t of tabsRef.current) { bridgeRef.current?.detach(t.model); t.model.dispose(); }
     for (const m of monaco.editor.getModels()) if (m.uri.scheme === 'file') m.dispose();
-    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set()); setDiff(null); setProblems(new Map());
+    setTabs([]); setActive(null); setChildren(new Map()); setExpanded(new Set()); setDiff(null); setProblems(new Map()); setLayout(emptyLayout()); layoutRestored.current = null;
     setWs(info);
     out(`Opened folder ${info.root}`);
     await loadDir('');
@@ -161,12 +170,15 @@ export function App() {
     setTrusted(t);
     void extClient.refresh();
     if (!t) askTrust(info);
+    await restoreLayout(info.root);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- restoreLayout is stable (refs only)
   }, [loadDir, out, askTrust, extClient]);
 
   const openFolder = useCallback(() => call('workspace.openDialog.v1', {}).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
   const openRecent = useCallback((root: string) => call('workspace.open.v1', { root }).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
 
-  const openFile = useCallback(async (rel: string, line?: number, col?: number) => {
+  /** Load rel into a tab model if not open yet. Returns false (and reports) on failure. */
+  const ensureTab = useCallback(async (rel: string, report = true): Promise<boolean> => {
     if (!tabsRef.current.some((t) => t.rel === rel)) {
       try {
         const { content, mtimeMs } = await call('fs.read.v1', { rel });
@@ -175,12 +187,31 @@ export function App() {
         if (existing && existing.getValue() !== content && existing.getAlternativeVersionId() === 1) existing.setValue(content);
         model.onDidChangeContent(() => bump((n) => n + 1));
         bridgeRef.current?.attach(model);
-        setTabs((ts) => [...ts, { rel, model, savedAltId: model.getAlternativeVersionId(), mtimeMs, disk: 'ok' }]);
-      } catch (e) { fail(e); return; }
+        const tab: Tab = { rel, model, savedAltId: model.getAlternativeVersionId(), mtimeMs, disk: 'ok' };
+        tabsRef.current = [...tabsRef.current, tab];
+        setTabs((ts) => (ts.some((t) => t.rel === rel) ? ts : [...ts, tab]));
+      } catch (e) { if (report) fail(e); return false; }
     }
+    return true;
+  }, [fail]);
+  const restoreLayout = async (root: string) => {
+    let saved: Layout | null = null;
+    try { saved = fromSaved(JSON.parse(localStorage.getItem(`nova.layout.v1:${root}`) ?? 'null')); } catch { saved = null; }
+    if (saved && wsRef.current?.root === root) {
+      const all = [...new Set(saved.groups.flatMap((g) => g.rels))];
+      const ok = new Set<string>();
+      for (const rel of all) if (await ensureTab(rel, false)) ok.add(rel);
+      if (wsRef.current?.root !== root) return;
+      const l = reconcile(saved, ok);
+      setLayout(l); setActive(l.groups[l.activeGroup]?.active ?? null);
+    }
+    layoutRestored.current = root;
+  };
+  const openFile = useCallback(async (rel: string, line?: number, col?: number) => {
+    if (!(await ensureTab(rel))) return;
     setActive(rel);
     if (line) setTimeout(() => { const ed = editorRef.current; if (ed) { ed.setPosition({ lineNumber: line, column: col ?? 1 }); ed.revealLineInCenter(line); ed.focus(); } }, 50);
-  }, [fail]);
+  }, [ensureTab]);
 
   const toggleDir = useCallback((rel: string) => {
     setExpanded((s) => { const n = new Set(s); if (n.has(rel)) n.delete(rel); else { n.add(rel); void loadDir(rel).catch(fail); } return n; });
@@ -296,17 +327,21 @@ export function App() {
     } catch (e) { fail(e); }
   }, [fail, out]);
 
-  const closeTab = useCallback((rel: string) => {
+  const closeTab = useCallback((rel: string, groupIdx?: number) => {
+    const L = layoutRef.current;
     if (rel === SETTINGS_TAB || rel === DIFF_TAB) {
       if (rel === DIFF_TAB) setDiff((d) => { d?.original.dispose(); d?.modified.dispose(); return null; });
-      setActive(tabsRef.current.at(-1)?.rel ?? null); return;
+      setActive(L.groups[L.activeGroup]?.active ?? null); return;
     }
+    const gi = groupIdx ?? L.activeGroup;
     const t = tabsRef.current.find((x) => x.rel === rel);
     if (!t) return;
+    const after = (l: Layout) => { setLayout(l); if (activeRef.current !== SETTINGS_TAB && activeRef.current !== DIFF_TAB) setActive(l.groups[l.activeGroup]?.active ?? null); };
+    if (L.groups.some((g, i) => i !== gi && g.rels.includes(rel))) { after(closeIn(L, gi, rel)); return; } // still shown in another group
     const doClose = () => {
       const rest = tabsRef.current.filter((x) => x.rel !== rel);
+      after(closeIn(layoutRef.current, gi, rel));
       bridgeRef.current?.detach(t.model); t.model.dispose(); setTabs(rest);
-      if (activeRef.current === rel) setActive(rest.at(-1)?.rel ?? null);
     };
     if (t.model.getAlternativeVersionId() !== t.savedAltId) setDialog({ kind: 'confirm', message: `Discard unsaved changes to ${rel}?`, confirmLabel: 'Discard', confirm: () => { setDialog(null); doClose(); } });
     else doClose();
@@ -333,6 +368,7 @@ export function App() {
       const to = joinRel(parentOf(e.rel), name);
       void call('fs.rename.v1', { from: e.rel, to }).then(async (r) => {
         out(`Renamed ${e.rel} → ${r.rel}`);
+        pendingRename.current = (x) => (x === e.rel || x.startsWith(e.rel + '/') ? r.rel + x.slice(e.rel.length) : x);
         setTabs((ts) => ts.map((t) => {
           if (t.rel !== e.rel && !t.rel.startsWith(e.rel + '/')) return t;
           const nrel = r.rel + t.rel.slice(e.rel.length);
@@ -394,34 +430,75 @@ export function App() {
   }, [fail]);
 
   const aiActionRef = useRef<(a: Exclude<PrepareReq['action'], 'chat'>) => void>(() => {});
-  // ---- Monaco lifecycle: one editor, models swapped per tab. Keystrokes never cross IPC.
+  // ---- Monaco lifecycle: one editor per group, models (one per open file) shared between groups. Keystrokes never cross IPC.
   const activeTab = tabs.find((t) => t.rel === active);
+  const setupEditor = useCallback((ed: monaco.editor.IStandaloneCodeEditor) => {
+    const subs = [ed.onDidChangeCursorPosition((e) => {
+      if (ed !== editorRef.current) return;
+      setCursor({ ln: e.position.lineNumber, col: e.position.column });
+      const rel = activeRef.current;
+      if (rel && Date.now() > navigating.current && tabsRef.current.some((t) => t.rel === rel && t.model === ed.getModel())) nav.push({ rel, line: e.position.lineNumber, col: e.position.column });
+    })];
+    debugStore.attach(ed);
+    ed.addAction({ id: 'nova.ai.explain', label: 'NOVA AI: Explain Selection', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('explainSelection') });
+    ed.addAction({ id: 'nova.ai.inline', label: 'NOVA AI: Inline Edit…', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('inlineEdit') });
+    ed.addAction({ id: 'nova.ai.tests', label: 'NOVA AI: Generate Tests', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('generateTests') });
+    ed.addAction({ id: 'nova.ai.doc', label: 'NOVA AI: Document Function', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('documentFunction') });
+    ed.addAction({ id: 'nova.rename', label: 'Rename Symbol (with preview)', keybindings: [monaco.KeyCode.F2], contextMenuGroupId: '1_modification', run: (e) => bridgeRef.current?.rename(e) });
+    return () => { for (const d of subs) d.dispose(); };
+  }, [debugStore, nav]);
+  const editorOptions = useMemo<monaco.editor.IEditorOptions>(() => (settings ? { fontSize: settings.editorFontSize, tabSize: settings.editorTabSize, wordWrap: settings.editorWordWrap ? 'on' : 'off', minimap: { enabled: settings.editorMinimap } } : {}), [settings]);
+  // Keep the focused group showing the active file; follow the focused group's active file after layout changes.
   useEffect(() => {
-    if (!hostRef.current || !activeTab) return;
-    if (!editorRef.current) {
-      const ed = monaco.editor.create(hostRef.current, { theme: 'nova-dark', automaticLayout: true, fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace' });
-      ed.onDidChangeCursorPosition((e) => {
-        setCursor({ ln: e.position.lineNumber, col: e.position.column });
-        const rel = activeRef.current;
-        if (rel && Date.now() > navigating.current && tabsRef.current.some((t) => t.rel === rel && t.model === ed.getModel())) nav.push({ rel, line: e.position.lineNumber, col: e.position.column });
-      });
-      debugStore.attach(ed);
-      ed.addAction({ id: 'nova.ai.explain', label: 'NOVA AI: Explain Selection', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('explainSelection') });
-      ed.addAction({ id: 'nova.ai.inline', label: 'NOVA AI: Inline Edit…', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('inlineEdit') });
-      ed.addAction({ id: 'nova.ai.tests', label: 'NOVA AI: Generate Tests', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('generateTests') });
-      ed.addAction({ id: 'nova.ai.doc', label: 'NOVA AI: Document Function', contextMenuGroupId: '8_ai', run: () => aiActionRef.current('documentFunction') });
-      ed.addAction({ id: 'nova.rename', label: 'Rename Symbol (with preview)', keybindings: [monaco.KeyCode.F2], contextMenuGroupId: '1_modification', run: (e) => bridgeRef.current?.rename(e) });
-      editorRef.current = ed;
-    }
-    editorRef.current.setModel(activeTab.model);
-    { const p = editorRef.current.getPosition(); if (p && Date.now() > navigating.current) nav.push({ rel: activeTab.rel, line: p.lineNumber, col: p.column }); } // switching files is a navigation
-    editorRef.current.focus();
-  }, [activeTab, debugStore, nav]);
+    if (!active || active === SETTINGS_TAB || active === DIFF_TAB || !tabsRef.current.some((t) => t.rel === active)) return;
+    setLayout((l) => { const g = l.groups[l.activeGroup]; return g && g.active === active && g.rels.includes(active) ? l : openIn(l, l.activeGroup, active); });
+  }, [active, tabs]);
   useEffect(() => {
-    if (!settings || !editorRef.current) return;
-    editorRef.current.updateOptions({ fontSize: settings.editorFontSize, tabSize: settings.editorTabSize, wordWrap: settings.editorWordWrap ? 'on' : 'off', minimap: { enabled: settings.editorMinimap } });
-  }, [settings, activeTab]);
-  useEffect(() => { if (!tabs.length && editorRef.current) { editorRef.current.dispose(); editorRef.current = null; } }, [tabs.length]);
+    const ren = pendingRename.current; pendingRename.current = null;
+    setLayout((l) => reconcile(l, new Set(tabs.map((t) => t.rel)), ren ?? undefined));
+  }, [tabs]);
+  useEffect(() => {
+    const a = activeRef.current; if (a === SETTINGS_TAB || a === DIFF_TAB) return;
+    const g = layout.groups[layout.activeGroup];
+    if (g && g.active !== a) setActive(g.active);
+    const root = wsRef.current?.root;
+    if (root && layoutRestored.current === root) try { localStorage.setItem(`nova.layout.v1:${root}`, JSON.stringify(toSaved(layout))); } catch { /* quota */ }
+  }, [layout]);
+  const focusGroup = useCallback((gi: number) => {
+    const l = layoutRef.current; if (gi === l.activeGroup && activeRef.current === l.groups[gi]?.active) return;
+    setLayout({ ...l, activeGroup: gi }); setActive(l.groups[gi]?.active ?? null);
+  }, []);
+  const splitEditor = useCallback((dir: 'row' | 'column') => {
+    const l = layoutRef.current; if (!l.groups[l.activeGroup]?.active) { fail('Open a file to split the editor'); return; }
+    const n = split(l, l.activeGroup, dir); setLayout(n); setActive(n.groups[n.activeGroup]?.active ?? null);
+    setTimeout(() => editorRef.current?.focus(), 50);
+  }, [fail]);
+  // Tab drag between groups (pointer based: works the same with mouse, pen and automation). Ctrl/Alt while dropping copies.
+  const startTabDrag = useCallback((e: React.PointerEvent, rel: string, from: number) => {
+    if (e.button !== 0) return;
+    const x0 = e.clientX, y0 = e.clientY; let dragging = false;
+    const target = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const g = el?.closest<HTMLElement>('[data-group]'); if (!g) return null;
+      const tab = el?.closest<HTMLElement>('[role=tab][data-rel]');
+      const tabs = [...g.querySelectorAll<HTMLElement>('[role=tab][data-rel]')];
+      return { to: Number(g.dataset.group), at: tab ? tabs.indexOf(tab) : undefined };
+    };
+    const move = (ev: PointerEvent) => {
+      if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+      dragging = true; document.body.classList.add('tab-dragging'); setDropGroup(target(ev)?.to ?? null);
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      document.body.classList.remove('tab-dragging'); setDropGroup(null);
+      if (!dragging) return;
+      const t = target(ev); if (!t) return;
+      suppressClick.current = true; setTimeout(() => { suppressClick.current = false; }, 0);
+      const n = moveTab(layoutRef.current, from, t.to, rel, ev.ctrlKey || ev.altKey, t.at); setLayout(n); setActive(n.groups[n.activeGroup]?.active ?? null);
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  }, []);
+  const suppressClick = useRef(false);
   useEffect(() => {
     if (!diff || active !== DIFF_TAB || !diffHostRef.current) return;
     if (!diffEdRef.current) diffEdRef.current = monaco.editor.createDiffEditor(diffHostRef.current, { theme: 'nova-dark', automaticLayout: true, readOnly: true, originalEditable: false });
@@ -521,20 +598,22 @@ export function App() {
     void call('ext.executeCommand.v1', args ? { command, args } : { command }).catch(fail);
   }, [fail]);
   // Editor context-menu contributions (re-registered whenever contributions change).
-  const editorReady = !!editorRef.current;
   useEffect(() => {
-    const ed = editorRef.current; if (!ed) return;
-    const ds = extClient.contributions.editorContext.map((m, i) => {
+    const ds = [...editorsRef.current.values()].flatMap((ed) => extClient.contributions.editorContext.map((m, i) => {
       const lang = /^editorLangId == ([A-Za-z0-9_.-]+)$/.exec(m.when ?? '')?.[1];
       return ed.addAction({ id: `ext.${i}.${m.command}`, label: `${m.title} (${m.extName})`, contextMenuGroupId: '9_extensions', ...(lang ? { precondition: `editorLangId == '${lang}'` } : {}), run: () => runExt(m.command) });
-    });
+    }));
     return () => { for (const d of ds) d.dispose(); };
-  }, [extClient.contributions, runExt, editorReady]);
+  }, [extClient.contributions, runExt, editorsVer]);
   const commands: Command[] = useMemo(() => [
     { id: 'workspace.openFolder', title: 'File: Open Folder…', keybinding: 'Ctrl+O', run: openFolder },
     { id: 'project.new', title: 'File: New Project…', run: () => setWizard(true) },
     { id: 'workbench.quickOpen', title: 'Go to File…', keybinding: 'Ctrl+P', run: () => void quickOpen() },
     { id: 'editor.gotoSymbol', title: 'Go to Symbol in Editor…', keybinding: 'Ctrl+Shift+O', run: () => void gotoSymbol() },
+    { id: 'view.splitRight', title: 'View: Split Editor Right', keybinding: 'Ctrl+\\', run: () => splitEditor('row') },
+    { id: 'view.splitDown', title: 'View: Split Editor Down', run: () => splitEditor('column') },
+    { id: 'view.closeGroup', title: 'View: Close Editor Group', run: () => { const l = layoutRef.current; if (l.groups.length > 1) { const n = { ...l, groups: l.groups.filter((_, i) => i !== l.activeGroup), activeGroup: Math.max(0, l.activeGroup - 1) }; setLayout(n); setActive(n.groups[n.activeGroup]?.active ?? null); } } },
+    ...layout.groups.map((_, i) => ({ id: `view.focusGroup${i + 1}`, title: `View: Focus Editor Group ${i + 1}`, keybinding: `Ctrl+${i + 1}`, run: () => { focusGroup(i); setTimeout(() => editorRef.current?.focus(), 30); } })),
     { id: 'nav.back', title: 'Go Back', keybinding: 'Alt+Left', run: () => void goTo(nav.back(), true) },
     { id: 'nav.forward', title: 'Go Forward', keybinding: 'Alt+Right', run: () => void goTo(nav.forward(), true) },
     ...(runTasksView ? [{ id: 'runTasks.open', title: `View: ${runTasksView}`, run: () => { setView('runTasks'); setShowSidebar(true); } }] : []),
@@ -567,7 +646,7 @@ export function App() {
     ...extClient.contributions.commands.filter((c) => c.palette).map((c) => ({ id: `ext:${c.command}`, title: `${c.category ?? c.extName}: ${c.title}`, run: () => runExt(c.command) })),
     ...extClient.contributions.tasks.map((t) => ({ id: `task:${t.extId}:${t.id}`, title: `Tasks: Run ${t.label} (${t.extName})`, run: () => runExt(t.command) })),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- contributions is a mutable field; listing it re-memoizes on refresh
-  ], [aiClient, aiAction, extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust, quickOpen, gotoSymbol, goTo, nav]);
+  ], [aiClient, aiAction, extClient, extClient.contributions, runExt, openFolder, save, saveAs, closeTab, active, updateSettings, settings, recent, openRecent, ws, newEntry, targetDir, selectedEntry, trusted, askTrust, quickOpen, gotoSymbol, goTo, nav, splitEditor, focusGroup, layout.groups]);
 
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
@@ -580,6 +659,8 @@ export function App() {
       if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { runCmd(e.key === 'ArrowLeft' ? 'nav.back' : 'nav.forward'); return; }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       if (e.key.toLowerCase() === 'p' && !e.shiftKey) { runCmd('workbench.quickOpen'); return; }
+      if (e.key === '\\' && !e.shiftKey) { runCmd('view.splitRight'); return; }
+      if (/^[1-4]$/.test(e.key) && !e.shiftKey && commandsRef.current.some((c) => c.id === `view.focusGroup${e.key}`)) { runCmd(`view.focusGroup${e.key}`); return; }
       if (e.key.toLowerCase() === 'o' && e.shiftKey) { runCmd('editor.gotoSymbol'); return; }
       const map: Record<string, string> = { ',': 'workbench.settings', '`': 'terminal.focus' };
       const k = e.shiftKey ? ({ F: 'workbench.search', G: 'workbench.scm', X: 'workbench.extensions' } as Record<string, string>)[e.key.toUpperCase()] : map[e.key];
@@ -673,30 +754,54 @@ export function App() {
         )}
         <main className="center">
           <section className="editor-area">
-            {(tabs.length > 0 || showSettings || diff) && (
-              <div className="tabs" role="tablist">
-                {tabs.map((t) => (
-                  <div key={t.rel} role="tab" aria-selected={t.rel === active} data-rel={t.rel} className={`tab${t.rel === active ? ' active' : ''}`} onClick={() => setActive(t.rel)} title={t.disk === 'ok' ? t.rel : `${t.rel} — ${t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}`}>
-                    {t.rel.split('/').pop()}
-                    {t.disk !== 'ok' && <span className="disk" data-disk={t.disk} aria-label={t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}>⚠</span>}
-                    {isDirty(t) ? <span className="dirty" aria-label="unsaved changes" /> : null}
-                    <button className="close" aria-label={`Close ${t.rel}`} onClick={(e) => { e.stopPropagation(); closeTab(t.rel); }}>×</button>
+            <div className={`groups dir-${layout.dir}${showSettings || showDiff ? ' collapsed' : ''}`}>
+              {layout.groups.map((g, gi) => {
+                const special = showSettings || showDiff;
+                const gTab = tabs.find((t) => t.rel === g.active);
+                const focused = gi === layout.activeGroup && !special;
+                const showBar = g.rels.length > 0 || (gi === 0 && (showSettings || !!diff)) || layout.groups.length > 1;
+                return (
+                  <div key={g.id} style={special && gi > 0 ? { display: 'none' } : undefined} className={`group${focused && layout.groups.length > 1 ? ' focused' : ''}${dropGroup === gi ? ' drop-target' : ''}`} data-group={gi} aria-label={`Editor group ${gi + 1}`}
+>
+                    {showBar && (
+                      <div className="tabs" role="tablist" aria-label={`Tabs of editor group ${gi + 1}`}>
+                        {g.rels.map((rel) => { const t = tabs.find((x) => x.rel === rel); if (!t) return null; const on = rel === g.active && !special; return (
+                          <div key={t.rel} role="tab" aria-selected={on} data-rel={t.rel} className={`tab${on && (focused || layout.groups.length === 1) ? ' active' : on ? ' active-unfocused' : ''}`}
+                            onPointerDown={(e) => { if (!(e.target as HTMLElement).closest('button')) startTabDrag(e, t.rel, gi); }}
+                            onClick={() => { if (suppressClick.current) return; const n = openIn(layoutRef.current, gi, t.rel); setLayout(n); setActive(t.rel); }}
+                            title={t.disk === 'ok' ? t.rel : `${t.rel} — ${t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}`}>
+                            {t.rel.split('/').pop()}
+                            {t.disk !== 'ok' && <span className="disk" data-disk={t.disk} aria-label={t.disk === 'deleted' ? 'deleted on disk' : 'changed on disk'}>⚠</span>}
+                            {isDirty(t) ? <span className="dirty" aria-label="unsaved changes" /> : null}
+                            <button className="close" aria-label={`Close ${t.rel}`} onClick={(e) => { e.stopPropagation(); closeTab(t.rel, gi); }}>×</button>
+                          </div>); })}
+                        {gi === 0 && diff && <div role="tab" aria-selected={showDiff} className={`tab${showDiff ? ' active' : ''}`} onClick={() => setActive(DIFF_TAB)}>{diff.rel.split('/').pop()} ({diff.staged ? 'Staged' : 'Working Tree'})<button className="close" aria-label="Close Diff" onClick={(e) => { e.stopPropagation(); closeTab(DIFF_TAB); }}>×</button></div>}
+                        {gi === 0 && showSettings && <div role="tab" aria-selected className="tab active">Settings<button className="close" aria-label="Close Settings" onClick={() => closeTab(SETTINGS_TAB)}>×</button></div>}
+                        {!special && (
+                          <span className="tab-actions">
+                            {gTab && <button className="icon-btn" title="Split Editor Right (Ctrl+\\)" aria-label={`Split editor group ${gi + 1} right`} onClick={() => { focusGroup(gi); setTimeout(() => splitEditor('row'), 0); }}>◫</button>}
+                            {layout.groups.length > 1 && <button className="icon-btn" title="Close Group" aria-label={`Close editor group ${gi + 1}`} onClick={() => { const l = layoutRef.current; const n = { ...l, groups: l.groups.filter((_, i) => i !== gi), activeGroup: Math.max(0, Math.min(l.activeGroup > gi ? l.activeGroup - 1 : l.activeGroup, l.groups.length - 2)) }; setLayout(n); setActive(n.groups[n.activeGroup]?.active ?? null); }}>✕</button>}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {focused && gTab && (
+                      <nav className="breadcrumbs" aria-label="Breadcrumbs">
+                        {gTab.rel.split('/').map((seg, i, a) => <span key={`p${i}`}>{i > 0 && <span className="sep">›</span>}<span className={i === a.length - 1 ? 'sym' : ''}>{seg}</span></span>)}
+                        {outline?.rel === gTab.rel && symbolPathAt(outline.syms, cursor.ln).map((sym, i) => (
+                          <span key={`s${i}`}><span className="sep">›</span><button title={`${sym.kind} ${sym.name} (Go to Symbol…)`} onClick={() => void gotoSymbol()}>{sym.name}</button></span>
+                        ))}
+                      </nav>
+                    )}
+                    <EditorPane model={gTab?.model ?? null} visible={!special} label={`Editor ${gi + 1}`} options={editorOptions}
+                      setup={(ed) => { editorsRef.current.set(g.id, ed); setEditorsVer((v) => v + 1); const undo = setupEditor(ed); return () => { undo(); editorsRef.current.delete(g.id); }; }}
+                      onFocus={() => focusGroup(gi)}
+                      onShown={(ed) => { if (gi !== layoutRef.current.activeGroup) return; const p = ed.getPosition(); if (p && g.active && Date.now() > navigating.current) nav.push({ rel: g.active, line: p.lineNumber, col: p.column }); setCursor({ ln: p?.lineNumber ?? 1, col: p?.column ?? 1 }); }} />
                   </div>
-                ))}
-                {diff && <div role="tab" aria-selected={showDiff} className={`tab${showDiff ? ' active' : ''}`} onClick={() => setActive(DIFF_TAB)}>{diff.rel.split('/').pop()} ({diff.staged ? 'Staged' : 'Working Tree'})<button className="close" aria-label="Close Diff" onClick={(e) => { e.stopPropagation(); closeTab(DIFF_TAB); }}>×</button></div>}
-                {showSettings && <div role="tab" aria-selected className="tab active">Settings<button className="close" aria-label="Close Settings" onClick={() => closeTab(SETTINGS_TAB)}>×</button></div>}
-              </div>
-            )}
+                );
+              })}
+            </div>
             {showSettings ? <SettingsView settings={settings} onChange={updateSettings} /> : null}
-            {activeTab && !showSettings && !showDiff && (
-              <nav className="breadcrumbs" aria-label="Breadcrumbs">
-                {activeTab.rel.split('/').map((seg, i, a) => <span key={`p${i}`}>{i > 0 && <span className="sep">›</span>}<span className={i === a.length - 1 ? 'sym' : ''}>{seg}</span></span>)}
-                {outline?.rel === activeTab.rel && symbolPathAt(outline.syms, cursor.ln).map((sym, i) => (
-                  <span key={`s${i}`}><span className="sep">›</span><button title={`${sym.kind} ${sym.name} (Go to Symbol…)`} onClick={() => void gotoSymbol()}>{sym.name}</button></span>
-                ))}
-              </nav>
-            )}
-            <div className="editor-host" ref={hostRef} style={{ display: activeTab && !showSettings && !showDiff ? 'block' : 'none' }} />
             <div className="editor-host" ref={diffHostRef} aria-label="Diff editor" style={{ display: showDiff ? 'block' : 'none' }} />
             {!activeTab && !showSettings && !showDiff && (
               <div className="welcome">
