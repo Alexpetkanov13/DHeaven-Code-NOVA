@@ -20,7 +20,15 @@ import type { ChildProcess } from 'node:child_process';
 import { detectGradle, killRun, listTasks, runGradle, stopGradleDaemons } from './gradle';
 import { DebugManager } from './dap/manager';
 import { JAVA_DEBUG, javaAdapter } from './dap/java';
-import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
+import { pythonAdapter } from './dap/python';
+import { JS_DEBUG_SETUP, nodeAdapter } from './dap/node';
+import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, type TestFramework } from './junit';
+import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
+import { parsePytestXml, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
+import { cargoArgs, parseCargoOutput } from './testing/cargo';
+import { discoverPythons, probePython, resolvePython, type PyInterpreter } from './python';
+import { jsArgs, parseJestJson, parseVitestJunit, planJs, reportPath, runnerEntry } from './testing/js';
+import { findExecutable } from './lsp/discover';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 import { detectProfiles, pickProfile } from './terminalProfiles';
@@ -101,6 +109,71 @@ const gradleKilled = new Set<number>();
 let gradleSeq = 0;
 let dbg!: DebugManager;
 const testRuns = new Map<number, ChildProcess>();
+/** The workspace's Python (chosen interpreter, else venv, else PATH) for tests, the debugger and Pyright. */
+async function pythonForWs(root: string) { return resolvePython(root, (await wsSettings.get(root)).pythonPath); }
+let lastPythons: PyInterpreter[] = [];
+/** js-debug's dapDebugServer.js: the file the user chose, else <serversDir>/js-debug/src/dapDebugServer.js. */
+async function jsDebugInfo(): Promise<{ path: string | null; source: 'chosen' | 'servers dir' | null }> {
+  const chosen = (await store.getSettings()).debugAdapterPaths['js-debug'];
+  if (chosen && fsSync.existsSync(chosen)) return { path: chosen, source: 'chosen' };
+  const def = path.join(serversDir(), 'js-debug', 'src', 'dapDebugServer.js');
+  return fsSync.existsSync(def) ? { path: def, source: 'servers dir' } : { path: null, source: null };
+}
+/** One framework's part of a test run; output is streamed as tests.output.v1, results come from the tool's report. */
+async function runTestTarget(root: string, runId: number, framework: TestFramework, filters: string[], debug: boolean): Promise<{ code: number | null; results: TestCase[]; error: string | null }> {
+  const out = (data: string) => emit('tests.output.v1', { runId, data });
+  const echo = (cmd: string, args: string[]) => out(`> ${cmd} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}\n`);
+  if (framework === 'gradle') {
+    const info = await detectGradle(root); const env = await gradleEnv(root);
+    const startedAt = Date.now();
+    await clearResults(root);
+    const args = testArgs(filters, debug);
+    echo('gradle', args);
+    let tail = ''; let announced = false;
+    const code = await new Promise<number | null>((resolve) => testRuns.set(runId, runGradle(root, info, args, env, (data) => {
+      out(data);
+      if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
+    }, (c) => resolve(c))));
+    try { return { code, results: await readResults(root, startedAt), error: null }; }
+    catch (e) { return { code, results: [], error: String(e) }; }
+  }
+  if (framework === 'pytest') {
+    const py = await pythonForWs(root); const xml = pytestXmlPath(runId); const args = pytestArgs(root, filters, xml);
+    await fs.rm(xml, { force: true });
+    if (py.note) out(`# ${py.note}\n`);
+    out(`# Python: ${py.command} (${py.source}${py.version ? `, ${py.version}` : ''})\n`); echo(py.command, args);
+    const r = await new Promise<{ code: number | null; output: string }>((resolve) => testRuns.set(runId, spawnTool(py.command, args, root, { ...process.env, PYTHONUNBUFFERED: '1' }, out, (c, o) => resolve({ code: c, output: o }))));
+    const xmlText = await fs.readFile(xml, 'utf8').catch(() => null);
+    await fs.rm(xml, { force: true });
+    return { code: r.code, results: xmlText ? parsePytestXml(xmlText) : [], error: xmlText ? null : pytestMissing(r.output, py.command) ?? (r.code === 5 ? 'pytest collected no tests' : null) };
+  }
+  if (framework === 'vitest' || framework === 'jest') {
+    const node = await findExecutable(['node']);
+    if (!node) return { code: null, results: [], error: 'Node.js (node) was not found on PATH; it is needed to run vitest/jest.' };
+    let entry: string;
+    try { entry = await runnerEntry(root, framework); } catch (e) { return { code: null, results: [], error: e instanceof Error ? e.message : String(e) }; }
+    const plan = planJs(filters);
+    // Whole files and named tests need different invocations (-t would otherwise narrow the whole-file part too).
+    const parts: { files: string[]; pattern: string | null }[] = filters.length ? [...(plan.files.length ? [{ files: plan.files, pattern: null }] : []), ...(plan.tests ? [{ files: plan.tests.files, pattern: plan.tests.pattern }] : [])] : [{ files: [], pattern: null }];
+    const results: TestCase[] = []; let code: number | null = 0; const errors: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (gradleKilled.has(runId)) break;
+      const report = reportPath(runId, i, framework); await fs.rm(report, { force: true });
+      const args = jsArgs(entry, framework, report, parts[i]!.files, parts[i]!.pattern);
+      echo(node, args);
+      const r = await new Promise<{ code: number | null }>((resolve) => testRuns.set(runId, spawnTool(node, args, root, { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }, out, (c) => resolve({ code: c }))));
+      const rep = await fs.readFile(report, 'utf8').catch(() => null); await fs.rm(report, { force: true });
+      if (rep) { try { results.push(...(framework === 'vitest' ? parseVitestJunit(rep) : parseJestJson(rep, root))); } catch (e) { errors.push(`Could not read the ${framework} report: ${e instanceof Error ? e.message : e}`); } }
+      if (r.code !== 0 && code === 0) code = r.code;
+    }
+    return { code, results, error: errors.join('\n') || null };
+  }
+  const args = await cargoArgs(root, filters);
+  echo('cargo', args);
+  const r = await new Promise<{ code: number | null; output: string }>((resolve) => testRuns.set(runId, spawnTool('cargo', args, root, { ...process.env, CARGO_TERM_COLOR: 'never' }, out, (c, o) => resolve({ code: c, output: o }))));
+  const results = parseCargoOutput(r.output);
+  return { code: r.code, results, error: results.length || r.code === 0 ? null : /No such file|not found|ENOENT/.test(r.output) && /Failed to start/.test(r.output) ? 'cargo was not found on PATH (install Rust from https://rustup.rs)' : null };
+}
 /** Runs a gradle command to completion (pre-launch tasks); abortable (kills the process tree). */
 async function gradleOnce(root: string, args: string[], log: (s: string) => void, signal: AbortSignal): Promise<number | null> {
   const info = await detectGradle(root);
@@ -239,12 +312,29 @@ const handlers: Handlers = {
   'lsp.install.v1': async ({ serverId }) => {
     const def = Object.values(SERVERS).find((d) => d.id === serverId);
     if (!def) throw new AppError('NOT_FOUND', 'Unknown server');
+    if (def.kind !== 'jvm') throw new AppError('INVALID_REQUEST', `${def.name} is installed with your own toolchain: ${def.setup.commands.join(' or ')}`);
     const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('lsp.install.v1', { serverId, message, ...extra });
     void installServer(def, serversDir(), (u) => net.fetch(u as string), note)
       .then(() => { note('Installed', { done: true }); void lsp.restart(serverId).catch(() => {}); })
       .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
     return null;
   },
+  'lsp.setPath.v1': async ({ serverId, pick }) => {
+    const def = Object.values(SERVERS).find((d) => d.id === serverId);
+    if (!def || def.kind !== 'external') throw new AppError('NOT_FOUND', 'Unknown external language server');
+    let exe: string | null = null;
+    if (pick) {
+      const r = await dialog.showOpenDialog(win!, { title: `Choose the ${def.name} executable (${def.executables.join(' / ')})`, properties: ['openFile', 'dontAddToRecent'],
+        filters: process.platform === 'win32' ? [{ name: 'Programs', extensions: ['exe', 'cmd', 'bat'] }] : [] });
+      if (r.canceled || !r.filePaths[0]) return { path: (await store.getSettings()).lspServerPaths[serverId] ?? null };
+      exe = r.filePaths[0];
+    }
+    await store.setLspServerPath(serverId, exe);
+    lsp.redetect();
+    if (lsp.isRunning(serverId)) await lsp.restart(serverId);
+    return { path: exe };
+  },
+  'lsp.detect.v1': async () => { lsp.redetect(); return lsp.status(); },
   'lsp.open.v1': async ({ languageId, uri, version, text }) => { needWs(); await lsp.didOpen(languageId, uri, version, text); return null; },
   'lsp.change.v1': async ({ languageId, uri, version, changes }) => { lsp.didChange(languageId, uri, version, changes); return null; },
   'lsp.save.v1': async ({ languageId, uri }) => { lsp.didSave(languageId, uri); return null; },
@@ -260,6 +350,28 @@ const handlers: Handlers = {
     const extra = [g, w].filter((x): x is string => !!x);
     const eff = workspace ? await jdkFor(workspace.root, 0) : null;
     return { jdks: await discoverJdks(extra), globalHome: g, workspaceHome: w, effective: eff?.home ?? null };
+  },
+  'python.list.v1': async () => {
+    const root = needWs().root;
+    lastPythons = await discoverPythons(root);
+    return { interpreters: lastPythons, selected: (await wsSettings.get(root)).pythonPath, effective: await pythonForWs(root) };
+  },
+  'python.select.v1': async ({ path: p }) => {
+    const root = needWs().root;
+    if (p !== null && !lastPythons.some((x) => x.path === p)) throw new AppError('INVALID_REQUEST', 'Pick an interpreter from the discovered list, or use Choose Interpreter…');
+    await wsSettings.set(root, { pythonPath: p });
+    lsp.configurationChanged('pyright');
+    return null;
+  },
+  'python.pick.v1': async () => {
+    const root = needWs().root;
+    const r = await dialog.showOpenDialog(win!, { title: 'Choose a Python interpreter', defaultPath: root, properties: ['openFile', 'dontAddToRecent'], filters: process.platform === 'win32' ? [{ name: 'Python', extensions: ['exe'] }] : [] });
+    if (r.canceled || !r.filePaths[0]) return { path: (await wsSettings.get(root)).pythonPath };
+    const exe = r.filePaths[0];
+    try { await probePython(exe); } catch (e) { throw new AppError('INVALID_REQUEST', e instanceof Error ? e.message : String(e)); }
+    await wsSettings.set(root, { pythonPath: exe });
+    lsp.configurationChanged('pyright');
+    return { path: exe };
   },
   'jdk.select.v1': async ({ home, scope }) => {
     if (home && !(await probeJdk(home, 'selected'))) throw new AppError('NOT_FOUND', `Not a JDK (missing bin/java or release file): ${home}`);
@@ -300,6 +412,18 @@ const handlers: Handlers = {
   'debug.getBreakpoints.v1': async () => dbg.getBreakpoints(),
   'debug.setBreakpoints.v1': async ({ path: file, breakpoints }) => { assertWithin(needWs().root, file); return dbg.setBreakpoints(file, breakpoints); },
   'debug.adapter.v1': async () => ({ installed: JAVA_DEBUG.isInstalledSync(serversDir()), name: JAVA_DEBUG.name, version: JAVA_DEBUG.version, url: JAVA_DEBUG.download.url, sizeHint: JAVA_DEBUG.download.sizeHint, license: JAVA_DEBUG.download.license, sha256: JAVA_DEBUG.download.sha256 }),
+  'debug.jsDebug.v1': async () => ({ ...(await jsDebugInfo()), setup: JS_DEBUG_SETUP }),
+  'debug.jsDebugPath.v1': async ({ pick }) => {
+    let file: string | null = null;
+    if (pick) {
+      const r = await dialog.showOpenDialog(win!, { title: 'Choose js-debug/src/dapDebugServer.js', properties: ['openFile', 'dontAddToRecent'], filters: [{ name: 'dapDebugServer.js', extensions: ['js'] }] });
+      if (r.canceled || !r.filePaths[0]) return { path: (await jsDebugInfo()).path };
+      file = r.filePaths[0];
+      if (path.basename(file) !== 'dapDebugServer.js') throw new AppError('INVALID_REQUEST', 'Pick the dapDebugServer.js file from the js-debug release (js-debug/src/dapDebugServer.js).');
+    }
+    await store.setDebugAdapterPath('js-debug', file);
+    return { path: file };
+  },
   'debug.install.v1': async () => {
     const note = (message: string, extra: { done?: boolean; error?: boolean } = {}) => emit('debug.install.v1', { message, ...extra });
     void installServer(JAVA_DEBUG, serversDir(), (u) => net.fetch(u as string), note)
@@ -307,23 +431,26 @@ const handlers: Handlers = {
       .catch((e) => note(`Install failed: ${e instanceof Error ? e.message : e}`, { done: true, error: true }));
     return null;
   },
-  'tests.discover.v1': async () => discoverTests(needWs().root),
-  'tests.run.v1': async ({ filters, debug }) => {
-    const root = (await requireTrust()).root; const info = await detectGradle(root);
-    if (!info.isGradle) throw new AppError('NOT_FOUND', 'Test runs need a Gradle project');
+  'tests.discover.v1': async () => discoverAllTests(needWs().root),
+  'tests.run.v1': async ({ targets, debug }) => {
+    const root = (await requireTrust()).root;
+    const plan = targets.length ? targets : frameworksOf(await discoverAllTests(root)).map((framework) => ({ framework, filters: [] as string[] }));
+    if (!plan.length) throw new AppError('NOT_FOUND', 'No tests found (JUnit under src/test, pytest test_*.py files, or Rust #[test] functions)');
+    if (debug && plan.some((t) => t.framework !== 'gradle')) throw new AppError('INVALID_REQUEST', 'Debugging a test is supported for Gradle/JUnit tests only');
+    for (const t of plan) if (t.framework === 'gradle' && t.filters.some((f) => !GRADLE_FILTER.test(f))) throw new AppError('INVALID_REQUEST', 'Invalid Gradle test filter');
+    if (plan.some((t) => t.framework === 'gradle') && !(await detectGradle(root)).isGradle) throw new AppError('NOT_FOUND', 'JUnit test runs need a Gradle project');
     const runId = ++gradleSeq;
-    const startedAt = Date.now();
-    await clearResults(root);
-    let tail = ''; let announced = false;
-    const p = runGradle(root, info, testArgs(filters, !!debug), await gradleEnv(root), (data) => {
-      emit('tests.output.v1', { runId, data });
-      if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
-    }, (code) => {
+    void (async () => {
+      const results: TestCase[] = []; const errors: string[] = []; let code: number | null = 0;
+      for (const t of plan) {
+        if (gradleKilled.has(runId)) break;
+        const r = await runTestTarget(root, runId, t.framework, t.filters, !!debug);
+        results.push(...r.results); if (r.error) errors.push(r.error);
+        if (r.code !== 0 && code === 0) code = r.code;
+      }
       const killed = gradleKilled.delete(runId); testRuns.delete(runId);
-      void readResults(root, startedAt).then((results) => emit('tests.done.v1', { runId, code, killed, results, error: null, debugPort: null }))
-        .catch((e) => emit('tests.done.v1', { runId, code, killed, results: [], error: String(e), debugPort: null }));
-    });
-    testRuns.set(runId, p);
+      emit('tests.done.v1', { runId, code, killed, results, error: errors.join('\n') || null, debugPort: null });
+    })();
     return { runId };
   },
   'tests.cancel.v1': async ({ runId }) => { const p = testRuns.get(runId); if (p) { gradleKilled.add(runId); killRun(p); } return null; },
@@ -496,6 +623,9 @@ app.whenReady().then(async () => {
   lsp = new LspManager({
     serversDir: serversDir(), storageDir: path.join(app.getPath('userData'), 'lsp'),
     isTrusted: (root) => trust.isTrusted(root), jdkFor, emit: (n, p) => emit(n, p as never),
+    configuredPath: async (id) => (await store.getSettings()).lspServerPaths[id] ?? null,
+    // Pyright pulls `python.pythonPath`; give it the same interpreter tests and the debugger use.
+    configuration: async (id, section) => (id === 'pyright' && section === 'python' && workspace ? { pythonPath: (await pythonForWs(workspace.root)).command } : null),
   });
   let execSeq = 0;
   dbg = new DebugManager({
@@ -507,7 +637,7 @@ app.whenReady().then(async () => {
       waitJdtReady: (t, s) => lsp.waitReady('java', t, s),
       jdkFor: async (cfg) => (cfg.javaHome ? await probeJdk(cfg.javaHome, 'launch config') : null) ?? jdkFor(needWs().root, 0),
       debugInstalled: () => JAVA_DEBUG.isInstalledSync(serversDir()),
-    }) },
+    }), python: pythonAdapter({ pythonFor: pythonForWs }), node: nodeAdapter({ node: () => findExecutable(['node']), jsDebug: async () => (await jsDebugInfo()).path }) },
   });
   const aiDir = path.join(app.getPath('userData'), 'ai');
   ai = new AiService({

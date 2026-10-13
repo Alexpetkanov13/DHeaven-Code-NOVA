@@ -28,3 +28,16 @@ describe('session store', () => {
     expect(await st.lastWorkspace()).toBeNull(); // folder gone
   });
 });
+
+describe('settings: language server paths', () => {
+  it('cannot be set by a renderer settings patch, only by the main-process setter', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-set-'));
+    const st = new Store(dir);
+    const after = await st.updateSettings({ editorFontSize: 15, lspServerPaths: { tsls: '/tmp/evil' } } as never);
+    expect(after.editorFontSize).toBe(15);
+    expect(after.lspServerPaths).toEqual({});
+    expect((await st.setLspServerPath('tsls', '/opt/tsls')).lspServerPaths).toEqual({ tsls: '/opt/tsls' });
+    expect((await st.updateSettings({ editorFontSize: 16 })).lspServerPaths).toEqual({ tsls: '/opt/tsls' }); // kept across patches
+    expect((await st.setLspServerPath('tsls', null)).lspServerPaths).toEqual({});
+  });
+});

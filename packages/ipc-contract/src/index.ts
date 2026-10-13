@@ -35,6 +35,10 @@ export const Settings = z.object({
   colorTheme: z.string().max(256).default('nova-dark'),
   terminalProfile: z.string().max(64).nullable().default(null),
   restoreSession: z.boolean().default(true),
+  /** Executable chosen per external language server (set only through the main-process file picker, never by a renderer patch). */
+  lspServerPaths: z.record(z.string().max(64), z.string().max(4096)).default({}),
+  /** Debug adapters the user installs (js-debug's dapDebugServer.js); main-only, like lspServerPaths. */
+  debugAdapterPaths: z.record(z.string().max(64), z.string().max(4096)).default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -43,7 +47,7 @@ export const SessionDraft = z.object({ rel: z.string().min(1).max(4096), content
 export type SessionDraft = z.infer<typeof SessionDraft>;
 export const SessionState = z.object({ layout: z.unknown(), views: z.unknown(), drafts: z.array(SessionDraft).max(100), savedAt: z.number() });
 export type SessionState = z.infer<typeof SessionState>;
-export const SettingsPatch = Settings.partial().omit({ version: true });
+export const SettingsPatch = Settings.partial().omit({ version: true, lspServerPaths: true, debugAdapterPaths: true });
 
 const ExtId = z.string().max(256).regex(/^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/);
 export const GitFile = z.object({ path: z.string(), index: z.string(), worktree: z.string() });
@@ -135,19 +139,29 @@ export const ServerStatus = z.object({
   id: z.string(), name: z.string(), version: z.string(), languages: z.array(z.string()), installed: z.boolean(),
   state: z.enum(['stopped', 'starting', 'ready', 'restarting', 'crashed', 'failed', 'blocked']), reason: z.string().nullable(),
   pid: z.number().nullable(), capabilities: z.array(z.string()), limitations: z.string(),
-  download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }),
+  kind: z.enum(['jvm', 'external']),
+  /** jvm servers: NOVA downloads a pinned archive after consent. */
+  download: z.object({ url: z.string(), sizeHint: z.string(), license: z.string() }).nullable(),
+  /** external servers: resolved executable, where it came from, and how to install it. */
+  path: z.string().nullable(), pathSource: z.enum(['configured', 'PATH']).nullable(),
+  /** Work-done progress the server reports right now (e.g. "Indexing 45/120"); null when idle. */
+  progress: z.string().nullable(),
+  setup: z.object({ summary: z.string(), commands: z.array(z.string()), url: z.string(), license: z.string() }).nullable(),
 });
 export type ServerStatus = z.infer<typeof ServerStatus>;
 export const LSP_METHODS = ['textDocument/completion', 'completionItem/resolve', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/references', 'textDocument/prepareRename', 'textDocument/rename', 'textDocument/formatting', 'textDocument/codeAction', 'textDocument/documentSymbol', 'workspace/executeCommand'] as const;
 const FileUri = z.string().max(8192).startsWith('file://');
 
 export const LaunchConfig = z.object({
-  id: z.string().max(64), name: z.string().min(1).max(200), type: z.literal('java'), request: z.enum(['launch', 'attach']),
+  id: z.string().max(64), name: z.string().min(1).max(200), type: z.enum(['java', 'python', 'node']), request: z.enum(['launch', 'attach']),
   mainClass: z.string().max(500).optional(), projectName: z.string().max(200).optional(),
   args: z.string().max(32768).optional(), vmArgs: z.string().max(32768).optional(),
   env: z.record(z.string().max(256), z.string().max(32768)).optional(), cwd: z.string().max(4096).optional(),
   javaHome: z.string().max(4096).nullable().optional(), preLaunchTask: z.string().max(512).optional(),
   hostName: z.string().max(255).optional(), port: z.number().int().min(1).max(65535).optional(),
+  /** python (debugpy): a script relative to the workspace, or a module run with -m (e.g. `pytest`, `app.main`). */
+  program: z.string().max(4096).optional(), module: z.string().max(500).regex(/^$|^[A-Za-z_][\w.]*$/).optional(),
+  justMyCode: z.boolean().optional(),
 });
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
 export const SourceBreakpoint = z.object({ line: z.number().int().min(1), condition: z.string().max(4096).optional(), logMessage: z.string().max(4096).optional(), hitCondition: z.string().max(256).optional() });
@@ -158,9 +172,12 @@ export const DebugStatus = z.object({
 });
 export type DebugStatus = z.infer<typeof DebugStatus>;
 export const DAP_COMMANDS = ['threads', 'stackTrace', 'scopes', 'variables', 'continue', 'next', 'stepIn', 'stepOut', 'pause', 'evaluate', 'source', 'setVariable', 'exceptionInfo'] as const;
-export const TestCase = z.object({ id: z.string(), name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
+export const TestFramework = z.enum(['gradle', 'pytest', 'cargo', 'vitest', 'jest']);
+export type TestFramework = z.infer<typeof TestFramework>;
+export const TestCase = z.object({ id: z.string(), framework: TestFramework, name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number().nullable(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
 export type TestCase = z.infer<typeof TestCase>;
-export const TestNode = z.object({ id: z.string(), className: z.string(), method: z.string().nullable(), rel: z.string(), line: z.number() });
+/** id: the framework's own test name (Gradle `pkg.Class.method`, pytest node id `file::Class::test`, libtest `mod::test`). */
+export const TestNode = z.object({ id: z.string(), framework: TestFramework, label: z.string(), className: z.string(), method: z.string().nullable(), rel: z.string(), line: z.number() });
 export type TestNode = z.infer<typeof TestNode>;
 const VerifiedBp = z.object({ line: z.number(), verified: z.boolean(), message: z.string().optional() });
 
@@ -222,6 +239,9 @@ export const channels = {
   'lsp.restart.v1': def(z.object({ serverId: z.string() }), z.null()),
   'lsp.stop.v1': def(z.object({ serverId: z.string() }), z.null()),
   'lsp.install.v1': def(z.object({ serverId: z.string(), consent: z.literal(true) }), z.null()),
+  /** Main shows a native file picker (pick=true) or clears the configured path; the renderer never supplies a path. */
+  'lsp.setPath.v1': def(z.object({ serverId: z.string().max(64), pick: z.boolean() }), z.object({ path: z.string().nullable() })),
+  'lsp.detect.v1': def(z.object({}), z.array(ServerStatus)),
   'lsp.open.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), text: z.string().max(32 * 1024 * 1024) }), z.null()),
   'lsp.change.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri, version: z.number().int(), changes: z.array(z.object({ range: z.unknown().optional(), text: z.string() })).max(10000) }), z.null()),
   'lsp.save.v1': def(z.object({ languageId: z.string().max(64), uri: FileUri }), z.null()),
@@ -232,6 +252,16 @@ export const channels = {
     jdks: z.array(z.object({ home: z.string(), version: z.string(), major: z.number(), source: z.string() })),
     globalHome: z.string().nullable(), workspaceHome: z.string().nullable(), effective: z.string().nullable(),
   })),
+  /** Python interpreters (probed) and the one in effect for this workspace (tests, debugger, Pyright). */
+  'python.list.v1': def(z.object({}), z.object({
+    interpreters: z.array(z.object({ path: z.string(), version: z.string(), source: z.string() })),
+    selected: z.string().nullable(),
+    effective: z.object({ command: z.string(), source: z.string(), version: z.string().nullable(), note: z.string().nullable() }),
+  })),
+  /** path must be one of the interpreters the last python.list.v1 returned (or null = automatic); main re-checks it. */
+  'python.select.v1': def(z.object({ path: z.string().max(4096).nullable() }), z.null()),
+  /** Native file picker in main; the chosen file must run as Python. */
+  'python.pick.v1': def(z.object({}), z.object({ path: z.string().nullable() })),
   'jdk.select.v1': def(z.object({ home: z.string().max(4096).nullable(), scope: z.enum(['global', 'workspace']) }), z.null()),
   'gradle.detect.v1': def(z.object({}), z.object({ isGradle: z.boolean(), wrapper: z.boolean(), buildFile: z.string().nullable() })),
   'gradle.tasks.v1': def(z.object({}), z.array(z.object({ name: z.string(), group: z.string(), description: z.string() }))),
@@ -246,9 +276,16 @@ export const channels = {
   'debug.getBreakpoints.v1': def(z.object({}), z.object({ breakpoints: z.record(z.string(), z.array(SourceBreakpoint)), verified: z.record(z.string(), z.array(VerifiedBp)) })),
   'debug.setBreakpoints.v1': def(z.object({ path: z.string().max(4096), breakpoints: z.array(SourceBreakpoint).max(1000) }), z.array(VerifiedBp).nullable()),
   'debug.adapter.v1': def(z.object({}), z.object({ installed: z.boolean(), name: z.string(), version: z.string(), url: z.string(), sizeHint: z.string(), license: z.string(), sha256: z.string() })),
+  /** js-debug (Node.js): where it was found, or setup guidance; pick=true opens main's file picker, pick=false clears. */
+  'debug.jsDebug.v1': def(z.object({}), z.object({ path: z.string().nullable(), source: z.enum(['chosen', 'servers dir']).nullable(), setup: z.string() })),
+  'debug.jsDebugPath.v1': def(z.object({ pick: z.boolean() }), z.object({ path: z.string().nullable() })),
   'debug.install.v1': def(z.object({ consent: z.literal(true) }), z.null()),
   'tests.discover.v1': def(z.object({}), z.array(TestNode)),
-  'tests.run.v1': def(z.object({ filters: z.array(z.string().max(1000).regex(/^[A-Za-z0-9_$.*]+$/)).max(500), debug: z.boolean().optional() }), z.object({ runId: z.number() })),
+  /** targets: [] = every framework detected in the workspace. Filters are passed as separate argv entries (never a shell); a leading '-' is refused so a filter can't become an option. */
+  'tests.run.v1': def(z.object({
+    targets: z.array(z.object({ framework: TestFramework, filters: z.array(z.string().min(1).max(1000).regex(/^[^-\s][^\r\n\0]*$/)).max(500) })).max(5),
+    debug: z.boolean().optional(),
+  }), z.object({ runId: z.number() })),
   'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),
   'recent.list.v1': def(z.object({}), z.array(RecentEntry)),
   'ai.getConfig.v1': def(z.object({}), z.custom<AiConfigInfo>()),

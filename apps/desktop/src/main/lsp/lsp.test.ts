@@ -4,7 +4,7 @@ import os from 'node:os';
 import { FrameDecoder, encodeFrame } from './jsonrpc';
 import { canonicalUri, fileUri, mapUris, serverUri } from './uri';
 import { LspConnection } from './server';
-import { LspManager, badges } from './manager';
+import { LspManager, badges, progressText } from './manager';
 import type { ServerDef } from './registry';
 
 const fake = path.join(__dirname, 'fake-server.cjs');
@@ -63,7 +63,7 @@ describe('LspConnection (fake server)', () => {
 
 describe('LspManager', () => {
   const def: ServerDef = {
-    id: 'fake', name: 'Fake', languages: ['fakelang'], version: '0', minJava: 0,
+    kind: 'jvm', id: 'fake', name: 'Fake', languages: ['fakelang'], version: '0', minJava: 0,
     download: { url: 'https://example.invalid', sha256: '', kind: 'zip', sizeHint: '', license: '' },
     installDir: (d) => d, isInstalled: async () => true, limitations: 'test only',
     launch: async ({ root }) => ({ command: process.execPath, args: [fake], cwd: root }),
@@ -92,6 +92,25 @@ describe('LspManager', () => {
     expect((await m.status())[0]!.pid).not.toBe(pid);
     await m.stopAll();
   });
+  it('formats work-done progress (begin/report/end)', () => {
+    const b = progressText(undefined, { kind: 'begin', title: 'Indexing' })!;
+    expect(b).toBe('Indexing');
+    expect(progressText(b, { kind: 'report', message: '45/120 (std)', percentage: 37.4 })).toBe('Indexing — 45/120 (std) 37%');
+    expect(progressText('Indexing — 1/2', { kind: 'report', percentage: 80 })).toBe('Indexing — 80%');
+    expect(progressText(b, { kind: 'end' })).toBeNull();
+  });
+  it('answers workspace/configuration per section and re-sends on configurationChanged (Pyright pythonPath)', async () => {
+    let py = '/venv/a/bin/python';
+    const m = new LspManager({ serversDir: os.tmpdir(), storageDir: os.tmpdir(), isTrusted: async () => true, jdkFor: async () => jdk, emit: () => {},
+      configuration: async (id, section) => (id === 'fake' && section === 'python' ? { pythonPath: py } : null) }, [def]);
+    await m.setWorkspace(os.tmpdir());
+    await m.restart('fake');
+    await until(() => m.logs('fake').some((l) => l.includes('config [{"pythonPath":"/venv/a/bin/python"},null]')));
+    py = '/venv/b/bin/python';
+    m.configurationChanged('fake');
+    await until(() => m.logs('fake').some((l) => l.includes('config [{"pythonPath":"/venv/b/bin/python"},null]')));
+    await m.stopAll();
+  }, 30_000);
   it('badges reflect static and dynamic capabilities only', () => {
     expect(badges({ hoverProvider: false, definitionProvider: true }, new Set(['textDocument/rename']))).toEqual(['definition', 'rename']);
   });

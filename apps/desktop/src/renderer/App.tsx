@@ -20,6 +20,7 @@ import { DebugView, DebugConsole } from './components/DebugView';
 import { TestsView } from './components/TestsView';
 import { DebugStore } from './lib/debug';
 import type { GradleProblem } from '@nova/ipc-contract';
+import { PythonPanel } from './components/PythonPanel';
 import { JdkPanel } from './components/JdkPanel';
 import { ProblemsPanel, type ProblemItem } from './components/ProblemsPanel';
 import logo from './logo.svg';
@@ -799,11 +800,11 @@ export function App() {
               ) : view === 'tests' ? null : view === 'gradle' ? (
                 <GradleView trusted={trusted} hasWorkspace={!!ws} onError={fail} onProblems={onGradleProblems} />
               ) : view === 'lsp' ? (
-                <LanguageServersView trusted={trusted} onError={fail} askInstall={(sv) => setDialog({
+                <LanguageServersView trusted={trusted} onError={fail} askInstall={(sv) => sv.download && setDialog({
                   kind: 'confirm', confirmLabel: 'Download and Install',
                   message: `Download ${sv.name} ${sv.version} (${sv.download.sizeHint}, ${sv.download.license}) from ${sv.download.url}? The archive is verified against a pinned SHA-256 before it is extracted. Nothing is downloaded without this confirmation.`,
                   confirm: () => { setDialog(null); void call('lsp.install.v1', { serverId: sv.id, consent: true }).catch(fail); },
-                })}><JdkPanel onError={fail} hasWorkspace={!!ws} /></LanguageServersView>
+                })}><JdkPanel onError={fail} hasWorkspace={!!ws} />{ws && <PythonPanel onError={fail} />}</LanguageServersView>
               ) : (
                 <ScmView refreshKey={scmKey} trusted={trusted} onOpenDiff={(r, s, u) => void openDiff(r, s, u)} onError={fail} onLog={out} />
               )}

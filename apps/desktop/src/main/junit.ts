@@ -2,8 +2,9 @@ import { rmRetry } from './fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export interface TestNode { id: string; className: string; method: string | null; rel: string; line: number }
-export interface TestCase { id: string; name: string; status: 'passed' | 'failed' | 'skipped' | 'error'; timeMs: number; message: string | null; stack: string | null; stdout: string }
+export type TestFramework = 'gradle' | 'pytest' | 'cargo' | 'vitest' | 'jest';
+export interface TestNode { id: string; framework: TestFramework; label: string; className: string; method: string | null; rel: string; line: number }
+export interface TestCase { id: string; framework: TestFramework; name: string; status: 'passed' | 'failed' | 'skipped' | 'error'; timeMs: number | null; message: string | null; stack: string | null; stdout: string }
 
 async function walk(dir: string, out: string[], depth = 0) {
   if (depth > 30) return;
@@ -48,17 +49,17 @@ export async function discoverTests(root: string): Promise<TestNode[]> {
     const rel = path.relative(root, f).split(path.sep).join('/');
     for (const c of classes) {
       const fq = pkg ? `${pkg}.${c.name}` : c.name;
-      nodes.push({ id: fq, className: fq, method: null, rel, line: c.line });
-      for (const m of c.methods) nodes.push({ id: `${fq}.${m.name}`, className: fq, method: m.name, rel, line: m.line });
+      nodes.push({ id: fq, framework: 'gradle', label: c.name, className: fq, method: null, rel, line: c.line });
+      for (const m of c.methods) nodes.push({ id: `${fq}.${m.name}`, framework: 'gradle', label: m.name, className: fq, method: m.name, rel, line: m.line });
     }
   }
   return nodes;
 }
 
 const ENT: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
-const unesc = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e] ?? m));
-const attrs = (s: string) => { const o: Record<string, string> = {}; for (const m of s.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) o[m[1]!] = unesc(m[2]!); return o; };
-const text = (s: string) => unesc(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_m, c: string) => c.replace(/&/g, '&amp;').replace(/</g, '&lt;')));
+export const unesc = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e] ?? m));
+export const attrs = (s: string) => { const o: Record<string, string> = {}; for (const m of s.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) o[m[1]!] = unesc(m[2]!); return o; };
+export const text = (s: string) => unesc(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_m, c: string) => c.replace(/&/g, '&amp;').replace(/</g, '&lt;')));
 
 /** Parses Gradle/Surefire JUnit XML (`TEST-*.xml`). Method names drop the trailing `()` Gradle adds for JUnit 5. */
 export function parseJUnitXml(xml: string): TestCase[] {
@@ -76,7 +77,7 @@ export function parseJUnitXml(xml: string): TestCase[] {
     const skipped = /<skipped\b/.test(body);
     const sysout = /<system-out>([\s\S]*?)<\/system-out>/.exec(body);
     out.push({
-      id, name, timeMs: Math.round(Number(a.time ?? 0) * 1000),
+      id, framework: 'gradle', name, timeMs: Math.round(Number(a.time ?? 0) * 1000),
       status: fail ? (fail[1] === 'error' ? 'error' : 'failed') : skipped ? 'skipped' : 'passed',
       message: fail ? attrs(fail[2]!).message ?? null : skipped ? attrs(/<skipped\b([^>]*)/.exec(body)![1]!).message ?? null : null,
       stack: fail?.[3] ? text(fail[3]).trim() : null,

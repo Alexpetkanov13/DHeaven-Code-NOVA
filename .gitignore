@@ -10,3 +10,7 @@ target/
 
 # language servers provisioned for local E2E (never commit)
 .nova-servers/
+
+# Python / Rust build output (fixtures and user projects opened in-tree)
+__pycache__/
+.pytest_cache/

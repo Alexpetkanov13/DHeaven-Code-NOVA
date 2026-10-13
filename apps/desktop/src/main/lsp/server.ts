@@ -4,7 +4,7 @@ import { FrameDecoder, encodeFrame } from './jsonrpc';
 import { killTree } from '../proc';
 
 export type ServerState = 'stopped' | 'starting' | 'ready' | 'restarting' | 'crashed' | 'failed';
-export interface LaunchSpec { command: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv }
+export interface LaunchSpec { command: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv; windowsVerbatimArguments?: boolean }
 type Pending = { resolve(v: unknown): void; reject(e: Error): void; timer: NodeJS.Timeout; method: string };
 
 export class LspRequestError extends Error { constructor(public code: number, message: string) { super(message); } }
@@ -34,7 +34,7 @@ export class LspConnection extends EventEmitter {
   async start(timeoutMs = 120_000) {
     this.setState('starting');
     this.log(`spawn: ${this.spec.command} ${this.spec.args.join(' ')}`);
-    const p = spawn(this.spec.command, this.spec.args, { cwd: this.spec.cwd, env: this.spec.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    const p = spawn(this.spec.command, this.spec.args, { cwd: this.spec.cwd, env: this.spec.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: this.spec.windowsVerbatimArguments, detached: process.platform !== 'win32' });
     this.proc = p; this.pid = p.pid;
     const dec = new FrameDecoder((m) => this.onMessage(m as Record<string, unknown>));
     p.stdout!.on('data', (c: Buffer) => { try { dec.push(c); } catch (e) { this.log(`protocol error: ${e}`); p.kill(); } });

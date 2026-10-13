@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor';
+import './tsGate'; // wraps provider registration before Monaco's TS mode sets up
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import JsonWorker from 'monaco-editor/language/json/json.worker?worker';
 import CssWorker from 'monaco-editor/language/css/css.worker?worker';

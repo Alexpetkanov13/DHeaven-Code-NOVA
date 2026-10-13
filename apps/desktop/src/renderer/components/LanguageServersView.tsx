@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ServerStatus } from '@nova/ipc-contract';
 import { call, on } from '../lib/ipc';
 
-const ALL = ['completion', 'hover', 'signatureHelp', 'definition', 'references', 'rename', 'formatting', 'codeActions'];
+const ALL = ['completion', 'hover', 'signatureHelp', 'definition', 'references', 'rename', 'formatting', 'codeActions', 'symbols'];
 
 interface Props { trusted: boolean; onError(e: unknown): void; askInstall(s: ServerStatus): void; children?: ReactNode }
 
@@ -34,11 +34,29 @@ export function LanguageServersView({ trusted, onError, askInstall, children }: 
           <div className="ls-head"><strong>{s.name}</strong> <span className="muted">{s.version} · {s.languages.join(', ')}</span></div>
           <div><span className={`ls-state st-${s.state}`} data-state={s.state}>{s.state}</span>{s.pid ? <span className="muted"> pid {s.pid}</span> : null}</div>
           {s.reason && <div className="muted">{s.reason}</div>}
+          {s.progress && <div className="muted small ls-progress" data-progress role="status">⟳ {s.progress}</div>}
           <div className="badges" aria-label={`${s.name} capabilities`}>
             {ALL.map((c) => <span key={c} className={`badge${s.capabilities.includes(c) ? ' on' : ''}`} title={s.capabilities.includes(c) ? 'Advertised by the running server' : s.state === 'ready' ? 'Not advertised by server' : 'Server not running'}>{c}</span>)}
           </div>
+          {s.kind === 'external' && (
+            <div className="ls-external">
+              {s.path
+                ? <div className="muted small" title={s.path}>Executable ({s.pathSource === 'configured' ? 'chosen by you' : 'found on PATH'}): <code className="ls-path">{s.path}</code></div>
+                : <div className="muted small">Executable: not found</div>}
+              {!s.installed && s.setup && (
+                <div className="ls-setup" aria-label={`${s.name} setup`}>
+                  <div className="small">{s.setup.summary}</div>
+                  {s.setup.commands.map((c) => <code key={c} className="ls-cmd">{c}</code>)}
+                  <div className="muted small">Run it in a terminal, then press Re-detect. NOVA does not download or install this server ({s.setup.license}).</div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="toggles">
-            {!s.installed && <button className="btn small" onClick={() => askInstall(s)}>Install…</button>}
+            {!s.installed && s.kind === 'jvm' && <button className="btn small" onClick={() => askInstall(s)}>Install…</button>}
+            {s.kind === 'external' && <button className="btn small" onClick={() => void call('lsp.detect.v1', {}).then(setServers).catch(onError)}>Re-detect</button>}
+            {s.kind === 'external' && <button className="btn small" onClick={() => void call('lsp.setPath.v1', { serverId: s.id, pick: true }).catch(onError)}>Choose Executable…</button>}
+            {s.kind === 'external' && s.pathSource === 'configured' && <button className="btn small" onClick={() => void call('lsp.setPath.v1', { serverId: s.id, pick: false }).catch(onError)}>Use PATH</button>}
             {s.installed && <button className="btn small" disabled={!trusted} onClick={() => void call('lsp.restart.v1', { serverId: s.id }).catch(onError)}>{s.state === 'ready' ? 'Restart' : 'Start'}</button>}
             {s.state !== 'stopped' && s.state !== 'blocked' && <button className="btn small" onClick={() => void call('lsp.stop.v1', { serverId: s.id }).catch(onError)}>Stop</button>}
             <button className="btn small" onClick={() => setLogsFor(logsFor === s.id ? null : s.id)}>{logsFor === s.id ? 'Hide Logs' : 'Logs'}</button>

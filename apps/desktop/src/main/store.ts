@@ -31,6 +31,26 @@ export class Store {
     await atomicWrite(this.settingsFile, JSON.stringify(next, null, 2));
     return next;
   }
+  /** Main-only: lspServerPaths is not part of SettingsPatch, so a renderer settings update cannot point NOVA at an arbitrary executable. */
+  async setLspServerPath(serverId: string, exe: string | null): Promise<Settings> {
+    const cur = await this.getSettings();
+    const paths = { ...cur.lspServerPaths };
+    if (exe) paths[serverId] = exe; else delete paths[serverId];
+    const next = Settings.parse({ ...cur, lspServerPaths: paths });
+    await fs.mkdir(this.dir, { recursive: true });
+    await atomicWrite(this.settingsFile, JSON.stringify(next, null, 2));
+    return next;
+  }
+  /** Main-only (not in SettingsPatch), chosen through a native file picker. */
+  async setDebugAdapterPath(id: string, file: string | null): Promise<Settings> {
+    const cur = await this.getSettings();
+    const paths = { ...cur.debugAdapterPaths };
+    if (file) paths[id] = file; else delete paths[id];
+    const next = Settings.parse({ ...cur, debugAdapterPaths: paths });
+    await fs.mkdir(this.dir, { recursive: true });
+    await atomicWrite(this.settingsFile, JSON.stringify(next, null, 2));
+    return next;
+  }
   async listRecent(): Promise<RecentEntry[]> {
     const parsed = z.array(RecentEntry).safeParse(await readJson(this.recentFile));
     return parsed.success ? parsed.data : [];

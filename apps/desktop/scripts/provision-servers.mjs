@@ -14,7 +14,8 @@ await build({
 });
 const { installServer, SERVERS, JAVA_DEBUG } = await import(pathToFileURL(entry).href);
 fs.mkdirSync(dir, { recursive: true });
-for (const def of [...Object.values(SERVERS), JAVA_DEBUG]) {
+// External servers (typescript-language-server, Pyright, rust-analyzer) are installed with the user's own toolchain, never by NOVA.
+for (const def of [...Object.values(SERVERS).filter((d) => d.kind !== 'external'), JAVA_DEBUG]) {
   const dest = def.installDir(dir);
   if (fs.existsSync(dest) && fs.readdirSync(dest).length) { console.log(`ok (cached) ${def.id} ${def.version}`); continue; }
   await installServer(def, dir, fetch, (m) => console.log(`[${def.id}] ${m}`));

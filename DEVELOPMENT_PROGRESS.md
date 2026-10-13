@@ -1,6 +1,155 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack (bundled first-party extension) — verified on Linux; Windows untested
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python/Node.js debugging + interpreter selection. CI runs unit + E2E on Linux and Windows.
+
+## Node.js debugging with js-debug; DAP child sessions (2026-10-13, ADR-0022)
+- **`main/dap/node.ts`:** runs `node dapDebugServer.js 0 127.0.0.1` with the user's `node`, reads the announced port and connects over TCP. Launch is `pwa-node` (program/args/cwd/env, internalConsole, skipFiles node internals, source maps); attach uses port 9229 by default.
+- **js-debug is user-installed** (the `js-debug-dap` release tarball; not on npm). Found via Choose js-debug… (main picker, `settings.debugAdapterPaths`, main-only) or `<servers dir>/js-debug/src/dapDebugServer.js`. When missing, Run and Debug shows the setup steps and disables Start.
+- **`DebugManager` handles `startDebugging` child sessions generically:**
+  - Factories may return `openChild()`; the client advertises `supportsStartDebuggingRequest`.
+  - The child gets the same handshake and becomes the active session.
+  - Per-connection `initialized` promises are created before any request. The first version waited for `initialized` only after the initialize response and timed out on the existing fake-adapter unit tests; fixed.
+  - Stop disconnects children first; `terminated` closes all of the session's connections.
+- **UI:** a Node.js type, Program/Arguments/Env/Working dir fields, a js-debug box (location or setup, Choose/Forget). The call stack shows basenames (js-debug's `source.name` is a full path).
+- **Environment note:** GitHub release assets and the GitHub API for other repos are blocked here. js-debug was built from source (`git clone` of the `v1.140.0` tag, `npm ci`, `gulp dapDebugServer`, 1 s) into `~/nova-servers/js-debug`; CI does the same.
+
+| Check | Command | Result |
+|---|---|---|
+| Real-adapter integration | `NOVA_SERVERS_DIR=~/nova-servers vitest run src/main/dap` | PASS 12, including the real **Java** session (JDT LS + java-debug) and the real debugpy sessions after the manager refactor. `node.int.test.ts` (3× in a row): breakpoint in the `startDebugging` child at `greeter.js:3` (frame `global.greet`); `name='NOVA'` (V8 doesn't list the `const` at the `return`; seen in the scopes dump); evaluate `'NOVA!'`; step; live breakpoint removal; run to exit with all output. Missing js-debug fails with the setup text |
+| E2E | `e2e/debug-node.spec.ts` | PASS 2/2. UI config (Type Node.js, Program `src/main.js`) → js-debug "servers folder" → stops at the gutter breakpoint, call stack `greet … greeter.js:3`, Variables `name: 'NOVA'`, console `'NOVA!'`, Step Over, ✕ removes the breakpoint, Continue → `Hello, Rust!`, terminated. Without js-debug: setup text, Start disabled; Choose js-debug… → "chosen by you", Start enabled, stored in `settings.json` |
+| Regression | `debug.spec` (Java), `debug-python`, `tests.spec` (JUnit debug-attach), `python-interpreter` | PASS 9/9 |
+| Unit | `pnpm test` | PASS (desktop 136 +5 skipped without a servers dir) |
+
+## Python interpreter selection (2026-10-13, ADR-0021)
+- **`main/python.ts`:** `discoverPythons` (workspace venvs, PATH, pyenv, conda base/envs, `py -0p`; each probed; deduplicated by real executable) and `resolvePython` (selected for this workspace > workspace venv > PATH as a full path; the Windows Store stub is skipped; a broken selection is reported in `note`).
+- **Used by:**
+  - pytest runs: the output's first line names the interpreter.
+  - the debugpy adapter: the Debug Console shows a broken selection.
+  - Pyright: `workspace/configuration` section `python` → `{ pythonPath }`, plus `workspace/didChangeConfiguration` when it changes.
+- **IPC:** `python.list.v1`; `python.select.v1` accepts only a path from the last list (or null); `python.pick.v1` uses main's native picker and must pass the probe. The choice is stored per workspace in userData.
+- **UI:** a Python card in the Language Servers view showing the interpreter in use, a dropdown, Choose Interpreter… and Refresh.
+- **Cleanup:** `pythonFor` in `testing/pytest.ts` is removed, superseded by `resolvePython`.
+
+| Check | Command | Result |
+|---|---|---|
+| Unit | `vitest run` (desktop) | PASS 136 (+3 skipped). `python.test.ts`: real probe; `/bin/echo` and missing paths rejected; resolution order with a real venv symlink; broken selection → `note` + venv fallback; PATH result is absolute; discovery finds the workspace venv + PATH. `lsp.test.ts`: the fake server pulls `workspace/configuration` like Pyright; it gets `{pythonPath}` for `python` and `null` for `python.analysis`, and pulls again after `configurationChanged` |
+| E2E | `e2e/python-interpreter.spec.ts` (real pytest 8.4.2, Pyright 1.1.414) | PASS, twice. Workspace with a bare `python -m venv --without-pip .venv` → the card shows `.venv` (virtualenv) → Run All says *pytest is not installed for …/.venv/bin/python* → debugging says *debugpy is not installed for …/.venv/bin/python* → Pyright: *Import "pytest" could not be resolved*. Select the PATH interpreter in the card → *selected for this workspace* → the Pyright diagnostic clears (no restart) → Run All runs with it, 4 passed → `workspace-settings.json` holds the path. The first two attempts failed on test locators (an option whose text contains "PATH" and the empty-state Problems panel); the product needed no change |
+| Regression | `debug-python`, `testing-langs`, `languages` specs | PASS |
+
+## Probe race fix (found by a flaky unit test)
+- **Bug:** `probeExecutable` (`--version` of external language servers) resolved on the child's `exit` event, which can fire before its stdout is fully read. Under load the version was lost, and the card showed "version unknown" for a working server. `probeDebugpy` had the same race, where it would have reported a spurious "import failed (exit 0)". The debugpy adapter stream was also destroyed on `exit`, which could drop the adapter's final events.
+- **Found by:** the external-server manager test failed 1 in 8 full parallel `vitest run`s; the diff showed `version: "version unknown"`.
+- **Fix:** all three wait for `close` (stdio drained). After the fix: 0 failures in 10 full runs; Python debugger unit (5) and E2E (2) still pass.
+- **CI on `0d7843e` (Python debugging): green on ubuntu-latest and windows-latest.**
+
+## Testing view: Vitest and Jest (2026-10-13, ADR-0019 addendum)
+- **`main/testing/js.ts`:** detects the runner from the root `package.json` (vitest preferred over jest).
+  - Static scan of `*.test|spec.*` / `__tests__` for `describe`/`it`/`test` with literal names; nesting by braces, with strings and comments stripped.
+  - Ids are `file::a > b`.
+- **Launch:** `node <runner bin entry from node_modules>` (no shell or `.cmd`).
+- **Results:** Vitest's JUnit report (with captured stdout) and Jest's `--json` report (`todo` counts as skipped; a file that fails to load becomes one error result).
+- **Filters:** whole files are positional; named tests use an exact `-t ^(?:…)$`, and mixed runs use two invocations.
+- **Fixtures:** `fixtures/js-vitest` (TS, vitest 3.2.7) and `fixtures/js-jest` (JS, jest 30.5.2), each with a `package-lock.json`. The E2E runs `npm ci` in its temp copy.
+
+| Check | Command | Result |
+|---|---|---|
+| Unit | `vitest run src/main/testing` | PASS 23: scan (nesting, modifiers, quotes, comments, member-call look-alikes, dynamic names skipped), fixture discovery, plan/args (escaped exact `-t`, Jest path regex matches `\` and `/`), missing-runner message, and **real reports** (`__data__/vitest.xml` from vitest 3.2.7, `__data__/jest.json` from jest 30.5.2) |
+| E2E | `xvfb-run -a npx playwright test e2e/testing-langs.spec.ts -g "vitest\|jest"` | PASS 2/2. Vitest: Run All 3/1/1, Exit 1; failure message; captured `greeting NOVA`; Rerun Failed uses `-t ^(?:greet punctuation deliberate failure)$`; a single test → Exit 0; the file ▶ → Exit 1. Jest: same flow, 2/1/1 (todo counts as skipped) |
+
+## Python debugging with debugpy (2026-10-13, ADR-0020)
+- **`main/dap/python.ts`: a second DAP adapter** next to java-debug, using the existing generic `DebugManager`.
+  - Runs `<python> -m debugpy.adapter` over stdio; its process tree is killed on close.
+  - Interpreter as for tests (workspace venv, else PATH). Before starting, a debugpy import probe gives a clear error with the pip command if it's missing.
+- **Launch config `type: 'python'`:** program or module, shell-like args, cwd, env, justMyCode; also attach to `debugpy --listen`.
+- **UI:**
+  - Run and Debug has a Type selector; Java fields and the java-debug banner are hidden for Python, and Start no longer requires java-debug for Python configs.
+  - The Testing view's 🐞 on pytest tests runs `-m pytest -q "<node id>"` under debugpy.
+  - Call-stack frames fall back to the file name from `source.path`. debugpy sends no `source.name`, which the E2E caught as `greet :6`.
+- **CI:** `debugpy==1.8.22`.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint | `pnpm typecheck`, `pnpm lint` | PASS |
+| Unit + real-adapter integration | `vitest run` (desktop) | PASS 126 (+3 skipped). `python.test.ts`: arg splitting; a missing debugpy names the interpreter and the pip command; **real debugpy 1.8.22** run 3× in a row: breakpoint → stack `greet:6` → local `name='NOVA'` → evaluate → step (`step`) → live breakpoint removal → continue → output + `exited with code 0`; `-m pytest <node id>` stops inside the test; program+module refused. The first version of the test expected one breakpoint hit; the DAP trace showed `greet()` runs 3 times (correct behaviour) |
+| E2E | `xvfb-run -a npx playwright test e2e/debug-python.spec.ts` | PASS 2/2, twice. UI config (Type → Python, Module `app.main`) → stops at a gutter breakpoint; Debug Console shows `Python: python3 (PATH) · debugpy 1.8.22`; call stack `greet greeter.py:6`; Variables `name: 'NOVA'`; console evaluate `'NOVA!'`; Step Out → `main.py`; ✕ removes the breakpoint mid-session; Continue → `> Hello, Rust!`, `exited with code 0`. Testing 🐞 on `test_greets_by_name` → stops in the test → Continue → `1 passed` |
+| Regression | `debug.spec`, `tests.spec`, `testing-langs.spec` | PASS (Java debug, JUnit debug-attach unchanged) |
+
+## Testing view: pytest and cargo test (2026-10-13, ADR-0019)
+- **Frameworks** (`main/testing/`): `gradle` (unchanged), `pytest`, `cargo`. Nodes and results carry `framework`; ids are the tool's own names (pytest node ids, libtest `module::fn`), so reruns pass them straight back.
+- **Discovery is a static source scan** (nothing executes, so it works in Restricted Mode).
+  - pytest: `test_*` functions and `Test*` methods in `test_*.py` / `*_test.py`.
+  - Rust: `#[test]` / `#[…::test]` functions, with module paths from the file layout plus inline `mod` blocks; comments and strings are skipped.
+- **Results from the tools themselves:**
+  - pytest `--junitxml` (xunit1, so file and node id map back; `junit_logging=out-err` for captured output; `--color=no`).
+  - libtest's stable text output (status lines; `---- X stdout ----` sections with `--show-output`; panic message and stack split out). No per-test durations, so `timeMs: null` instead of a fake 0.
+- **`tests.run.v1` takes `targets: [{framework, filters}]`;** `[]` means every detected framework, run one after another as one cancellable run. Filters may not start with `-`; Gradle keeps its strict alphabet.
+- **Python interpreter:** workspace `.venv`/`venv`/`env`, else `python3` (`python` on Windows). The run output names it. A missing pytest is reported as such.
+- **UI:**
+  - A framework badge per file.
+  - Parametrized results roll up into the function node, and the details pane lists every variant.
+  - Cargo groups run their leaves with `--exact`.
+  - Debug (🐞) is offered for JUnit only.
+- **Fixtures:**
+  - `fixtures/python/tests/test_greeter.py`: pass, 2 parametrized, skip, class tests, and a failure gated by `NOVA_DEMO_FAIL=1`.
+  - `fixtures/rust-cargo` `greeter::tests`: pass with stdout, ignored with reason, and a failure gated by the same variable.
+- **Cleanup:** `fixtures/python/app/__pycache__/*.pyc` had been committed by accident in `363b41e`; removed, and `__pycache__/` / `.pytest_cache/` are now ignored.
+- **CI:** `actions/setup-python` 3.12 + `pytest==8.4.2` on both OSes.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint | `tsc`, `eslint src e2e` | PASS |
+| Unit | `vitest run` (desktop) | PASS 121 (+3 skipped). New `testing.test.ts` parses **real captured output** (`__data__/pytest.xml` from pytest 8.4.2, `__data__/cargo-output.txt` from rustc 1.97) plus static scans of the fixtures; `testTargets.test.ts` covers filters/minimize/aggregation/running marker |
+| E2E | `xvfb-run -a npx playwright test e2e/testing-langs.spec.ts` (pytest 8.4.2, cargo 1.97) | PASS 2/2. **pytest:** discovery; Run All → 4 passed / 1 failed / 1 skipped; params roll up; failure message in details; captured `greeting NOVA`; Rerun Failed passes only that node id; single test → Exit 0. **cargo:** discovery; Run All → 2/1/1, Exit 101; panic message + `panicked at src/greeter.rs:39`; `--show-output` stdout; ignore reason; Rerun Failed → `--exact greeter::tests::deliberate_failure`; single test → Exit 0 |
+| Windows | CI | pending (next push) |
+
+## CI round 1 on PR #1 (`363b41e`) and fixes
+- **Linux and Windows: 21 passed, 1 skipped (ai), 1 failed.** The failure was the missing-server test. The TS/Python/Rust language tests passed on **both** OSes, including the Windows `.cmd` → `cmd.exe` launch of typescript-language-server.
+- **Root cause (product):** npm-installed servers are `#!/usr/bin/env node` shims, and with a reduced PATH (as when a GUI app is launched) node isn't found, so the server crash-loops. Fix `486e793`: external servers start with their own directory first on PATH (npm/nvm/fnm/Volta put node there). Reproduced locally with npm Pyright under `PATH=/usr/bin:/bin`; passes after the fix.
+- **Root cause (test, Windows):** setup-node puts npm's `.cmd` shims in `C:\npm\prefix`, away from `node.exe`, and the test had removed node from PATH, which no real session does. Fix `96dca91`: the test keeps node's directory unless it contains the server itself. Verified with npm Pyright first and with the pip wrapper first on PATH.
+
+## External language servers: TypeScript/JavaScript, Python, Rust (2026-10-13, ADR-0018)
+Session start audit: existing repo, HEAD `a41d40c`, CI green on ubuntu + windows for that commit. Locally on a fresh container: `cargo build --release`, `pnpm typecheck`, `pnpm lint`, `pnpm test` all PASS (desktop 97 + 2 skipped). The last three commits before this session (Quick Open / Go to Symbol / breadcrumbs / back-forward `5b2bf6d`, split editors up to 4 groups `61b11e6`, session restore / hot exit `a41d40c`) had E2E specs (`navigation`, `split`, `session`) but no entry here; they are covered by the full-suite run below.
+
+Gap found: Phase 3 promised TS/Python/Rust, but the registry only had JVM servers, and the LSP manager required a JDK for every server.
+
+What was built:
+- **Two server kinds** (`main/lsp/registry.ts`). `jvm` (JDT LS, kotlin-ls) is unchanged. `external` servers are installed by the user's toolchain and are **never downloaded by NOVA**: `typescript-language-server --stdio` (ts/js; `.tsx`/`.jsx` sent as `typescriptreact`/`javascriptreact`), `pyright-langserver --stdio` (or basedpyright), and `rust-analyzer`.
+- **Discovery** (`main/lsp/discover.ts`). The configured path wins, then PATH, then `~/.cargo/bin`, `~/.local/bin` and `%APPDATA%\npm` (or `/usr/local/bin` and `/opt/homebrew/bin`). PATHEXT is honoured on Windows. A `--version` probe (10 s bound) runs where the server supports it; it catches the rustup `rust-analyzer` proxy when the component is missing. The result is cached until Re-detect, Restart or a path change.
+- **Windows `.cmd` shims** run through `cmd.exe /d /s /c` with verbatim quoted args. cmd metacharacters in a path or argument are refused.
+- **UI** (Language Servers view). An external card shows the executable and where it came from (PATH or chosen by you), the version it reported, setup commands when missing (no Install button), Re-detect, Choose Executable… (native picker in main) and Use PATH. It also shows live work-done progress.
+- **`settings.lspServerPaths`** is excluded from `SettingsPatch`. Only `lsp.setPath.v1` (main-process file dialog) can set it, so a renderer patch can't make NOVA run an arbitrary binary.
+- **LSP client.** It advertises `window.workDoneProgress`. `$/progress` begin/report/end appears on the card, coalesced to ≤4 status events/s. `*/refresh` server requests are answered with null. Trigger characters now include `" ' / <`.
+- **Monaco TS worker gate** (`renderer/lib/tsGate.ts`). Found during E2E: F12 showed "Definitions (2)". `setModeConfiguration` is a no-op after Monaco's TS mode has set up (it registers providers once). The built-in providers are now wrapped at registration time (`instanceof` the TS mode's `Adapter`) and return nothing while typescript-language-server is ready. Worker diagnostics are switched off via `setDiagnosticsOptions`. Everything turns back on when the server isn't ready. F2 falls back to the worker's rename when no server offers rename (before, F2 on TS/JS always said "not supported").
+- Definition/references no longer fail as a whole when a target can't be opened (`Promise.allSettled`). Out-of-workspace targets (lib.d.ts, Rust std) are dropped and logged.
+- **Fixtures:** `fixtures/typescript-node`, `fixtures/python`, `fixtures/rust-cargo` (standalone `[workspace]`, so it isn't pulled into the repo's Cargo workspace).
+- `scripts/provision-servers.mjs` skips external servers. CI installs pinned versions of the three servers the way a user would (`npm i -g typescript-language-server@6.0.2 typescript@5.9.3 pyright@1.1.414`, `rustup component add rust-analyzer`) on both OSes, so `languages.spec` runs for real, including the Windows `.cmd` path.
+
+Box provisioning for this session (outside the repo): typescript-language-server 6.0.2 + typescript 5.9 in `~/opt/tsls` (npm), Pyright 1.1.414 (`~/.local/bin`, pre-installed), rust-analyzer 1.97.0 (`rustup component add`), JDT LS / kotlin-ls / java-debug via `provision-servers.mjs` (SHA-256 verified), OpenJDK 21.0.12.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint / build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | PASS |
+| Unit tests | `pnpm test` | PASS: contract 4, ai-core 12 (+3 skipped, no Ollama), extension-api 12, desktop 104 (+3 skipped). One run inside a parallel `pnpm -r` while E2E was running timed out (5 s vitest default) in the new manager test; spawn-heavy tests now have a 30 s budget, and repeated runs pass |
+| New unit tests | `discover.test.ts`, `lsp.test.ts`, `session.test.ts` | PATH vs extra dirs, non-executable skipped, first name wins; probe success / non-zero exit with stderr / hang timeout, paths with spaces; manager: missing → `blocked` with setup guidance, no pid, `download: null`; broken probe → reason names path + error; configured path wins (PATH not searched), re-detect after fix → ready with probed version, `.tsx` sent as `typescriptreact`; Windows-only `.cmd` quoting/refusal (runs on Windows CI only); progress text begin/report/end; renderer settings patch cannot set `lspServerPaths` |
+| **Languages E2E (real servers)** | `PATH=…tsls…:~/.local/bin:~/.cargo/bin NOVA_E2E_NO_SANDBOX=1 xvfb-run -a npx playwright test e2e/languages.spec.ts` | PASS 4/4. **TS:** tsls ready "found on PATH"; `greet(42)` in main.ts → Problems *Argument of type 'number' is not assignable to parameter of type 'string'* (cross-file, from the server); Problems has no *Cannot find module* (worker off); completion `greetAll`; F12 on `Greeter` → greeter.ts (single result). **Python:** Pyright → *cannot be assigned to parameter "name"*, completion `greet_all`, F12 → app/greeter.py. **Rust:** ready, waits for indexing progress to clear, F12 → src/greeter.rs, completion `greet_all`, `let broken: i32 = "oops"` + save → *mismatched types* (rustc via cargo check). **Missing server:** PATH=/usr/bin:/bin, HOME empty → pyright `blocked`, *Not found on PATH*, setup shows `pipx install pyright`, no Install button, no pid, editor still editable; Choose Executable… → "chosen by you" → Start → ready; `settings.json` has the path; Use PATH → not found again |
+| All E2E | `NOVA_SERVERS_DIR=~/nova-servers … xvfb-run -a npx playwright test` | PASS: 22 passed, 1 skipped (ai, no Ollama), 7.8 min, all servers on PATH (so TS fixtures in the older specs also ran with tsls active) |
+| Windows | CI on PR #1 | See "CI round 1" above: everything but the missing-server test passed on the first run; fixed in `486e793` / `96dca91` |
+
+Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-lsp-setup.png` (session scratchpad, not committed).
+
+### Limitations
+- Pyright has no formatter. (Interpreter picker: done, ADR-0021.)
+- No DAP for TS/JS or Rust (Python: debugpy since ADR-0020; tests: pytest, cargo test, Vitest and Jest since ADR-0019).
+- Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
+- Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
+- The TS gate relies on Monaco internals (`tsMode.js` `Adapter` export); re-check on Monaco upgrades. The E2E's "no *Cannot find module*" assertion guards it.
+- Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
+
+### Next slice (by dependency/value)
+1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: node:test/Mocha, and DAP for CodeLLDB (Rust). Node.js debugging is done (ADR-0022). Vitest/Jest are done (ADR-0019 addendum). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
+2. ~~Python interpreter/venv picker~~ (done, ADR-0021).
+3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
+4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).
 
 Environment: Linux x64 container, Node 20.19.2, pnpm 10.34.6, Electron 44.7.0, Rust 1.99.0 stable (installed via rustup; system 1.85 was too old for `ignore`).
 

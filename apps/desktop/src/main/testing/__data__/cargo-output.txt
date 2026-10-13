@@ -1,0 +1,38 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/main.rs (target/debug/deps/nova_rust_fixture-6135b0d7233be074)
+
+running 4 tests
+test greeter::tests::not_yet ... ignored, not implemented yet
+test greeter::tests::greets_all_with_prefix ... ok
+test greeter::tests::greets_by_name ... ok
+test greeter::tests::deliberate_failure ... FAILED
+
+successes:
+
+---- greeter::tests::greets_by_name stdout ----
+greeting NOVA
+
+
+successes:
+    greeter::tests::greets_all_with_prefix
+    greeter::tests::greets_by_name
+
+failures:
+
+---- greeter::tests::deliberate_failure stdout ----
+
+thread 'greeter::tests::deliberate_failure' (17857) panicked at src/greeter.rs:39:13:
+assertion `left == right` failed: set NOVA_DEMO_FAIL=1 to see a failure
+  left: "Hello, NOVA!"
+ right: "Hello, NOVA?"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    greeter::tests::deliberate_failure
+
+test result: FAILED. 2 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin nova-rust-fixture`
+error: 1 target failed:
+    `--bin nova-rust-fixture`
