@@ -7,3 +7,6 @@ playwright-report/
 *.log
 .e2e-tmp/
 target/
+
+# language servers provisioned for local E2E (never commit)
+.nova-servers/
