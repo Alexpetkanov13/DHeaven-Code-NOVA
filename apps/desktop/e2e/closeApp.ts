@@ -25,4 +25,10 @@ if (!patched.__novaTracked) {
 /** Call once at the top level of each spec file. */
 export function autoClose() {
   test.afterEach(async () => { for (const app of [...live]) await closeApp(app, 10_000); });
+  // Windows CI only: Gradle daemons / debuggee JVMs started by the app inherit the Electron process' stdio handles
+  // (Windows handle inheritance) and outlive it, so Playwright's worker teardown waits on those pipes forever.
+  // On a throwaway runner, kill leftover JVMs after each file. Never done on developer machines.
+  test.afterAll(() => {
+    if (process.platform === 'win32' && process.env.CI) try { execFileSync('taskkill', ['/F', '/T', '/IM', 'java.exe'], { stdio: 'ignore' }); } catch { /* none running */ }
+  });
 }
