@@ -1,0 +1,35 @@
+name: Windows release (unsigned)
+on:
+  workflow_dispatch:
+  push: { branches: [main] }
+permissions: { contents: read }
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.34.6 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20.19.2, cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Build novad.exe
+        run: cargo build --release
+      - name: Package NSIS + portable + zip (unsigned)
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+        run: pnpm dist:win
+      - name: Verify artifacts + SHA-256
+        run: node scripts/verify-artifacts.mjs apps/desktop/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DHeaven-Code-NOVA-windows-x64-unsigned
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

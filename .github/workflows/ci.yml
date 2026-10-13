@@ -1,0 +1,75 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }
+permissions: { contents: read }
+
+jobs:
+  build-test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      NOVA_SERVERS_DIR: ${{ github.workspace }}/.nova-servers
+      NOVA_E2E_NO_SANDBOX: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.34.6 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20.19.2, cache: pnpm }
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 25 for the Minecraft 26.x templates; 21 (last = JAVA_HOME) for JDT LS / kotlin-ls / Gradle fixtures
+          java-version: |
+            25
+            21
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: cargo test + release build (novad)
+        run: |
+          cargo test --release
+          cargo build --release
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Unit tests
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Cache language servers
+        uses: actions/cache@v4
+        with:
+          path: .nova-servers
+          key: nova-servers-${{ runner.os }}-${{ hashFiles('apps/desktop/src/main/lsp/registry.ts', 'apps/desktop/src/main/dap/java.ts') }}
+      - name: Provision language servers (pinned URLs + SHA-256)
+        working-directory: apps/desktop
+        run: node scripts/provision-servers.mjs "${{ env.NOVA_SERVERS_DIR }}"
+      - name: Playwright Electron runtime deps (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: E2E (linux, xvfb)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: xvfb-run -a npx playwright test
+      - name: E2E (windows, Playwright Electron)
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        run: npx playwright test
+      - name: Upload E2E results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ matrix.os }}
+          path: apps/desktop/test-results
+          retention-days: 7

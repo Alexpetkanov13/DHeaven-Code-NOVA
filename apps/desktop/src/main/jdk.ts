@@ -28,6 +28,8 @@ export async function discoverJdks(extra: string[] = []): Promise<Jdk[]> {
   const home = os.homedir();
   const cands: [string, string][] = [];
   if (process.env.JAVA_HOME) cands.push([process.env.JAVA_HOME, 'JAVA_HOME']);
+  // JAVA_HOME_21_X64 etc. (CI runners, actions/setup-java)
+  for (const [k, v] of Object.entries(process.env)) if (v && /^JAVA_HOME_\d+_(X64|AARCH64|ARM64)$/i.test(k)) cands.push([v, k]);
   for (const p of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!p) continue;
     try { const real = await fs.realpath(path.join(p, exe)); cands.push([path.dirname(path.dirname(real)), 'PATH']); } catch { /* not here */ }

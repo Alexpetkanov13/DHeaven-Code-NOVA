@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "DHeaven Code: NOVA — Build Beyond Limits.",
   "license": "UNLICENSED",
-  "engines": { "node": ">=20.19" },
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "pnpm --filter @nova/desktop dev",
     "build": "pnpm --filter @nova/desktop build",
@@ -14,5 +16,8 @@
     "e2e": "pnpm --filter @nova/desktop e2e",
     "dist:win": "pnpm --filter @nova/desktop dist:win",
     "dist:linux": "pnpm --filter @nova/desktop dist:linux"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.3"
   }
 }
