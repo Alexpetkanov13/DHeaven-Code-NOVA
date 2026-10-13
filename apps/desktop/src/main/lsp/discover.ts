@@ -76,7 +76,7 @@ export function probeExecutable(exe: string, probeArgs: string[], timeoutMs = 10
     p.stdout!.on('data', take); p.stderr!.on('data', take);
     const timer = setTimeout(() => { p.kill(); reject(new Error(`${path.basename(exe)} ${probeArgs.join(' ')} did not finish in ${timeoutMs / 1000} s`)); }, timeoutMs);
     p.on('error', (e) => { clearTimeout(timer); reject(e); });
-    p.on('exit', (code) => {
+    p.on('close', (code) => { // 'close', not 'exit': exit can fire before stdout has been fully read
       clearTimeout(timer);
       const first = out.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
       if (code === 0) resolve(first);

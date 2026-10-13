@@ -34,7 +34,7 @@ export function probeDebugpy(python: string, cwd: string, timeoutMs = 20_000): P
     p.stderr!.on('data', (b: Buffer) => { err += b.toString(); });
     const t = setTimeout(() => { p.kill(); reject(new Error(`${python} did not answer within ${timeoutMs / 1000} s`)); }, timeoutMs);
     p.on('error', (e) => { clearTimeout(t); reject(new Error(`Cannot run ${python}: ${e.message}. Install Python or create a .venv in the workspace.`)); });
-    p.on('exit', (code) => {
+    p.on('close', (code) => { // 'close', not 'exit': exit can fire before stdout has been fully read
       clearTimeout(t);
       if (code === 0 && out.trim()) resolve(out.trim());
       else if (/No module named ['"]?debugpy/.test(err)) reject(new Error(`debugpy is not installed for ${python}. Install it with: ${python} -m pip install debugpy`));
@@ -74,7 +74,7 @@ export function pythonAdapter(d: PythonDeps): AdapterFactory {
     const failed = await new Promise<Error | null>((resolve) => { p.once('spawn', () => resolve(null)); p.once('error', (e) => resolve(e)); });
     if (failed) throw new Error(`Cannot start debugpy adapter: ${failed.message}`);
     const stream = Duplex.from({ readable: p.stdout!, writable: p.stdin! }) as Duplex & NodeJS.ReadWriteStream;
-    p.on('exit', () => stream.destroy());
+    p.on('close', () => stream.destroy()); // after stdout is drained, so the adapter's last events are delivered
     const conn = new DapConnection(stream, (command) => { throw new Error(`reverse request ${command} not supported`); });
     conn.on('close', () => { if (p.pid && p.exitCode === null) killTree(p.pid); });
     return { conn, args };
