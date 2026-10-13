@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -93,5 +94,5 @@ test('java: JDK select, JDT LS diagnostics, completion, definition, crash isolat
   await expect(card(page, 'jdtls').getByLabel(/logs/)).toContainText('exited');
   if (shots) await page.screenshot({ path: path.join(shots, 'nova-lsp-status.png') });
 
-  await app.close();
+  await closeApp(app);
 });

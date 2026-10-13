@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -152,5 +153,5 @@ test('Minecraft pack: wizard creates Fabric + Paper, schemas diagnose, Skript hi
     await expect(out).toContainText('Stopping server', { timeout: 60_000 });
     await expect(page.locator('.mc-run-h')).toContainText(/exited with|stopped/, { timeout: 120_000 });
   }
-  await app.close();
+  await closeApp(app);
 });

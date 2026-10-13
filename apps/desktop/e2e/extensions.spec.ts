@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -91,7 +92,7 @@ test('install hello-world (.novaext), run its command, see output/status/message
   if (shot) await page.screenshot({ path: path.join(shot, 'nova-extensions.png') });
   // Theme selection is persisted in settings.
   expect(JSON.parse(await fs.readFile(path.join(path.dirname(ws), 'ud', 'settings.json'), 'utf8')).colorTheme).toMatch(/^dheaven\.custom-theme\//);
-  await app.close();
+  await closeApp(app);
 });
 
 test('a hanging extension is killed and quarantined; the workbench and other extensions survive', async () => {
@@ -119,7 +120,7 @@ test('a hanging extension is killed and quarantined; the workbench and other ext
   const r = await page.evaluate(() => window.nova.invoke('ext.executeCommand.v1', { command: 'bad.hang' }));
   expect(r).toMatchObject({ ok: false, error: { code: 'EXT_ERROR' } });
   expect(JSON.stringify(r)).toContain('quarantined');
-  await app.close();
+  await closeApp(app);
 });
 
 test('permission denial blocks workspace access; undeclared network is denied without a prompt; allow works', async () => {
@@ -153,5 +154,5 @@ test('permission denial blocks workspace access; undeclared network is denied wi
   await palette(page, 'Peek: Read README');
   await expect(output(page, 'Peek')).toContainText("DENIED: Permission 'workspace.read' was denied", { timeout: 10_000 });
   await expect(prompt).toHaveCount(0);
-  await app.close();
+  await closeApp(app);
 });

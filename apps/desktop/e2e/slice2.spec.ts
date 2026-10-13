@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -110,5 +111,5 @@ test('explorer ops, watcher, search/replace, terminal, git stage+commit, trust',
   await expect(page.locator('[data-scm-staged="src/hello.ts"]')).toHaveCount(0);
   expect(git(ws, 'log', '-1', '--format=%s').trim()).toBe('NOVA e2e: greet differently');
   expect(git(ws, 'show', '--name-only', '--format=', 'HEAD').trim()).toBe('src/hello.ts');
-  await app.close();
+  await closeApp(app);
 });

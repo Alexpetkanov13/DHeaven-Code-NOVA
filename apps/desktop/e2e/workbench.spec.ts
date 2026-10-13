@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -60,12 +61,12 @@ test('open folder, edit, save, relaunch shows recent', async () => {
   expect(await fs.readFile(path.join(ws, 'src/hello.ts'), 'utf8')).toContain('// edited by NOVA e2e');
   expect((await fs.readdir(path.join(ws, 'src'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   if (shot) await page.screenshot({ path: shot });
-  await app.close();
+  await closeApp(app);
 
   app = await launch(userData);
   page = await app.firstWindow();
   await expect(page.getByRole('list', { name: 'Recent workspaces' })).toContainText('sample-workspace');
   const settings = JSON.parse(await fs.readFile(path.join(userData, 'settings.json'), 'utf8').catch(() => '{}'));
   expect(typeof settings).toBe('object');
-  await app.close();
+  await closeApp(app);
 });

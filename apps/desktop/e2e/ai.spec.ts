@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -128,5 +129,5 @@ test('NOVA AI with a real local model: enable, stream, cancel, explain selection
   await page.getByRole('button', { name: 'Clear AI history' }).click();
   await expect(page.getByText('No AI history for this workspace.')).toBeVisible();
   expect(await page.evaluate(() => window.nova.invoke('ai.history.v1', {}))).toEqual({ ok: true, result: [] });
-  await app.close();
+  await closeApp(app);
 });

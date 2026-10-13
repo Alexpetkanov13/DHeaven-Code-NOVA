@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -54,5 +55,5 @@ test('gradle: tasks via wrapper, build output + exit 0, javac error -> Problems 
   await expect(outp).toContainText('> Task :sleepDemo', { timeout: 120_000 });
   await view.getByRole('button', { name: 'Kill' }).click();
   await expect(status).toContainText('Killed', { timeout: 30_000 });
-  await app.close();
+  await closeApp(app);
 });

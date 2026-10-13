@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -73,5 +74,5 @@ test('debug: breakpoint hit, local variable, watch + console evaluate, step, con
   await expect(state(page)).toHaveAttribute('data-debug-state', 'terminated', { timeout: 60_000 });
   await expect(page.getByLabel('Debug Console')).toContainText('Hello, NOVA!');
   await expect(page.getByLabel('Debug Console')).toContainText('exited with code 0');
-  await app.close();
+  await closeApp(app);
 });

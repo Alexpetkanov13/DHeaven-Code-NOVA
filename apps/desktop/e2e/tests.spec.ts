@@ -1,3 +1,4 @@
+import { closeApp } from './closeApp';
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -60,7 +61,7 @@ test('tests: discovery, run all with real pass/fail/skip counts, details, rerun 
   await waitDone(page);
   await expect(summary(page)).toContainText('Exit 0');
   await expect(node(page, 'com.dheaven.demo.MathTest.addition')).toHaveAttribute('data-status', 'passed');
-  await app.close();
+  await closeApp(app);
 });
 
 test('tests: without NOVA_DEMO_FAIL the deliberate failure is skipped and gradle exits 0', async () => {
@@ -71,7 +72,7 @@ test('tests: without NOVA_DEMO_FAIL the deliberate failure is skipped and gradle
   await expect(summary(page)).toHaveAttribute('data-failed', '0');
   await expect(summary(page)).toHaveAttribute('data-skipped', '2');
   await expect(summary(page)).toContainText('Exit 0');
-  await app.close();
+  await closeApp(app);
 });
 
 test('tests: debug a single test (gradle --debug-jvm + attach) stops at a breakpoint', async () => {
@@ -92,5 +93,5 @@ test('tests: debug a single test (gradle --debug-jvm + attach) stops at a breakp
   await page.getByRole('button', { name: 'Testing' }).click();
   await expect(summary(page)).toHaveAttribute('data-done', '1', { timeout: 120_000 });
   await expect(node(page, 'com.dheaven.demo.MathTest.addition')).toHaveAttribute('data-status', 'passed');
-  await app.close();
+  await closeApp(app);
 });
