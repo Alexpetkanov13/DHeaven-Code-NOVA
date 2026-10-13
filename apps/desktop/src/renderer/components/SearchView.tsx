@@ -13,22 +13,41 @@ export function SearchView({ onOpen, onError, onLog }: Props) {
   const [status, setStatus] = useState('');
   const idRef = useRef<number | null>(null);
 
+  // novad can stream matches (and even 'done') before the search.start response delivers the id, so events for a
+  // not-yet-known search are buffered and replayed once the id is known instead of being dropped.
+  const early = useRef(new Map<number, { matches: SearchMatch[]; done?: { total: number; truncated: boolean; cancelled: boolean } }>());
+  const showDone = (p: { total: number; truncated: boolean; cancelled: boolean }) =>
+    setStatus(`${p.total} result${p.total === 1 ? '' : 's'}${p.truncated ? ' (limit reached)' : ''}${p.cancelled ? ' (cancelled)' : ''}`);
+  const pending = useRef(false);
+  const runSeq = useRef(0);
   useEffect(() => {
-    const a = on('search.matches.v1', (p) => { if (p.searchId === idRef.current) setMatches((m) => [...m, ...p.matches]); });
+    const buf = (id: number) => { let b = early.current.get(id); if (!b) { b = { matches: [] }; early.current.set(id, b); if (early.current.size > 20) early.current.delete(early.current.keys().next().value!); } return b; };
+    const a = on('search.matches.v1', (p) => {
+      if (p.searchId === idRef.current) setMatches((m) => [...m, ...p.matches]);
+      else if (pending.current) buf(p.searchId).matches.push(...p.matches);
+    });
     const b = on('search.done.v1', (p) => {
-      if (p.searchId !== idRef.current) return;
-      setStatus(`${p.total} result${p.total === 1 ? '' : 's'}${p.truncated ? ' (limit reached)' : ''}${p.cancelled ? ' (cancelled)' : ''}`);
+      if (p.searchId === idRef.current) showDone(p);
+      else if (pending.current) buf(p.searchId).done = p;
     });
     return () => { a(); b(); };
   }, []);
 
   const run = async () => {
     if (idRef.current !== null) void call('search.cancel.v1', { searchId: idRef.current }).catch(() => {});
-    setMatches([]);
+    setMatches([]); early.current.clear();
     if (!query) { idRef.current = null; setStatus(''); return; }
     setStatus('Searching…');
-    try { idRef.current = (await call('search.start.v1', { query, isRegex, caseSensitive })).searchId; }
-    catch (e) { setStatus('Search failed'); onError(e); }
+    idRef.current = null; pending.current = true;
+    const token = ++runSeq.current;
+    try {
+      const id = (await call('search.start.v1', { query, isRegex, caseSensitive })).searchId;
+      if (token !== runSeq.current) { void call('search.cancel.v1', { searchId: id }).catch(() => {}); return; } // superseded
+      idRef.current = id;
+      const b = early.current.get(id); early.current.clear();
+      if (b) { if (b.matches.length) setMatches((m) => [...m, ...b.matches]); if (b.done) showDone(b.done); }
+    } catch (e) { setStatus('Search failed'); onError(e); }
+    finally { if (token === runSeq.current) pending.current = false; }
   };
   useEffect(() => { const t = setTimeout(() => void run(), 250); return () => clearTimeout(t); }, [query, isRegex, caseSensitive]); // eslint-disable-line react-hooks/exhaustive-deps
 
