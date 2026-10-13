@@ -1,0 +1,43 @@
+name: E2E Windows (diagnostic)
+on:
+  workflow_dispatch:
+    inputs:
+      grep: { description: 'Playwright --grep / spec files (blank = all)', required: false, default: '' }
+permissions: { contents: read }
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      NOVA_SERVERS_DIR: ${{ github.workspace }}/.nova-servers
+      NOVA_E2E_NO_SANDBOX: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.34.6 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20.19.2, cache: pnpm }
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            21
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build --release
+      - run: pnpm build
+      - uses: actions/cache@v4
+        with:
+          path: .nova-servers
+          key: nova-servers-${{ runner.os }}-${{ hashFiles('apps/desktop/src/main/lsp/registry.ts', 'apps/desktop/src/main/dap/java.ts') }}
+      - working-directory: apps/desktop
+        run: node scripts/provision-servers.mjs "${{ env.NOVA_SERVERS_DIR }}"
+      - name: E2E
+        working-directory: apps/desktop
+        shell: bash
+        run: npx playwright test --reporter=line --global-timeout=3000000 ${{ inputs.grep }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: e2e-windows-diag, path: apps/desktop/test-results, retention-days: 7 }
