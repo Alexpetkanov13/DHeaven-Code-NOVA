@@ -17,7 +17,12 @@ pub struct Registry { next: AtomicU64, sessions: Mutex<HashMap<u64, Session>> }
 pub struct Spawn { cwd: String, cols: u16, rows: u16, shell: Option<String> }
 
 fn default_shell() -> String {
-    if cfg!(windows) { std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".into()) }
+    if let Ok(s) = std::env::var("NOVA_SHELL") { if !s.is_empty() { return s; } }
+    if cfg!(windows) {
+        // Like VS Code: PowerShell (7 if installed, else Windows PowerShell 5.1), never COMSPEC/cmd.exe by default.
+        let on_path = |exe: &str| std::env::var_os("PATH").map_or(false, |p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()));
+        if on_path("pwsh.exe") { "pwsh.exe".into() } else { "powershell.exe".into() }
+    }
     else { std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()) }
 }
 
