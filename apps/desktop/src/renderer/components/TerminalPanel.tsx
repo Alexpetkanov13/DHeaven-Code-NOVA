@@ -44,7 +44,12 @@ function TermPane({ pane, active, label, onFocus, onKill, onExit, onError }: {
       ptyRef.current = r.ptyId; setTitle(r.profileName ?? 'shell');
       if (activeRef.current) for (const c of terminalQueue.splice(0)) void call('terminal.write.v1', { ptyId: r.ptyId, data: `${c}\r` }).catch(onError);
     }, onError);
-    const sub = term.onData((d) => { if (ptyRef.current !== null) void call('terminal.write.v1', { ptyId: ptyRef.current, data: d }).catch(onError); });
+    // Keystrokes must reach the PTY in order: chain writes instead of firing independent IPC calls.
+    let chain: Promise<unknown> = Promise.resolve();
+    const sub = term.onData((d) => {
+      const id = ptyRef.current; if (id === null) return;
+      chain = chain.then(() => call('terminal.write.v1', { ptyId: id, data: d })).catch(onError);
+    });
     const ro = new ResizeObserver(() => {
       try { fit.fit(); } catch { return; }
       if (ptyRef.current !== null) void call('terminal.resize.v1', { ptyId: ptyRef.current, cols: term.cols, rows: term.rows }).catch(() => {});
