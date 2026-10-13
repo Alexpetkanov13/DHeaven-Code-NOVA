@@ -16,7 +16,7 @@ import { installServer } from './lsp/installer';
 import { discoverJdks, probeJdk, type Jdk } from './jdk';
 import { WorkspaceSettingsStore } from './workspaceSettings';
 import type { ChildProcess } from 'node:child_process';
-import { detectGradle, killRun, listTasks, runGradle } from './gradle';
+import { detectGradle, killRun, listTasks, runGradle, stopGradleDaemons } from './gradle';
 import { DebugManager } from './dap/manager';
 import { JAVA_DEBUG, javaAdapter } from './dap/java';
 import { clearResults, DEBUG_LISTEN_RE, discoverTests, readResults, testArgs } from './junit';
@@ -135,6 +135,7 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   const st = await fs.stat(abs).catch(() => null);
   if (!st?.isDirectory()) throw new AppError('NOT_FOUND', 'Folder does not exist');
   workspace = { root: await fs.realpath(abs), name: path.basename(abs) };
+  const prevRoot = workspace?.root;
   watcher?.stop();
   killAllPtys();
   try { watcher = new CoalescingWatcher(workspace.root, (rels) => emit('fs.changed.v1', { rels })).start(); }
@@ -142,6 +143,7 @@ async function openWorkspace(root: string): Promise<WorkspaceInfo> {
   await store.addRecent(workspace.root, workspace.name);
   win?.setTitle(`${workspace.name} — DHeaven Code: NOVA`);
   killAllGradle();
+  if (prevRoot && prevRoot !== workspace.root) void stopGradleDaemons(6000, prevRoot);
   await lsp.setWorkspace(workspace.root);
   await dbg.setWorkspace(workspace.root, (await wsSettings.get(workspace.root)).breakpoints);
   await exts.stopAll();
@@ -496,4 +498,5 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   // Hard deadline: a child that ignores shutdown (e.g. a JVM on Windows holding handles) must never keep the app alive.
   setTimeout(() => app.exit(0), 8000).unref();
-  ai?.cancelAll(); void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop(); void lsp?.stopAll().finally(() => app.quit()); });
+  ai?.cancelAll(); void exts?.stopAll(); killAllGradle(); void dbg?.stop('Window closed'); watcher?.stop(); daemon?.stop();
+  void Promise.allSettled([lsp?.stopAll(), stopGradleDaemons(6000)]).finally(() => app.quit()); });

@@ -25,3 +25,21 @@ describe('gradle parsing', () => {
     expect(ps[0]).toMatchObject({ uri: fileUri(f), line: 5, source: 'javac' });
   });
 });
+
+describe('stopGradleDaemons', () => {
+  it.skipIf(process.platform === 'win32')('runs `gradlew --stop` once per project NOVA used, then forgets it', async () => {
+    const { default: fsp } = await import('node:fs/promises');
+    const os = await import('node:os');
+    const pth = await import('node:path');
+    const { gradleUsed, runGradle, stopGradleDaemons } = await import('./gradle');
+    const root = await fsp.mkdtemp(pth.join(os.tmpdir(), 'nova-gstop-'));
+    const log = pth.join(root, 'calls.txt');
+    await fsp.writeFile(pth.join(root, 'gradlew'), `#!/bin/sh\necho "$@" >> "${log}"\n`, { mode: 0o755 });
+    await new Promise<void>((r) => runGradle(root, { isGradle: true, wrapper: true, buildFile: null }, ['help'], process.env, () => {}, () => r()));
+    expect(gradleUsed.has(root)).toBe(true);
+    expect(await stopGradleDaemons(5000)).toEqual([root]);
+    expect((await fsp.readFile(log, 'utf8')).trim().split('\n')).toEqual(['help --console=plain', '--stop --console=plain -q']);
+    expect(gradleUsed.size).toBe(0);
+    expect(await stopGradleDaemons(5000)).toEqual([]);
+  });
+});

@@ -53,8 +53,26 @@ export function parseProblems(out: string): Problem[] {
 
 export interface Run { id: number; proc: ChildProcess; output: string[] }
 
+/** Projects (root -> {wrapper, env}) where NOVA started Gradle, so their daemons can be stopped on quit / workspace close. */
+export const gradleUsed = new Map<string, { wrapper: boolean; env: NodeJS.ProcessEnv }>();
+
+/** `gradle --stop` for every project NOVA ran (same wrapper/JAVA_HOME = same daemon registry), bounded by timeoutMs. */
+export async function stopGradleDaemons(timeoutMs = 6000, only?: string): Promise<string[]> {
+  const roots = [...gradleUsed.keys()].filter((r) => !only || r === only);
+  await Promise.all(roots.map((root) => new Promise<void>((resolve) => {
+    const { wrapper, env } = gradleUsed.get(root)!; gradleUsed.delete(root);
+    const { cmd, pre } = gradleCommand(root, wrapper);
+    let p: ChildProcess;
+    try { p = spawn(cmd, [...pre, '--stop', '--console=plain', '-q'], { cwd: root, env, windowsHide: true, stdio: 'ignore', detached: process.platform !== 'win32' }); } catch { resolve(); return; }
+    const t = setTimeout(() => { if (p.pid) killTree(p.pid, 'SIGKILL'); resolve(); }, timeoutMs);
+    p.on('error', () => { clearTimeout(t); resolve(); }); p.on('close', () => { clearTimeout(t); resolve(); });
+  })));
+  return roots;
+}
+
 export function runGradle(root: string, info: GradleInfo, args: string[], env: NodeJS.ProcessEnv, onData: (s: string) => void, onExit: (code: number | null, signal: string | null, problems: Problem[]) => void): ChildProcess {
   const { cmd, pre } = gradleCommand(root, info.wrapper);
+  gradleUsed.set(root, { wrapper: info.wrapper, env });
   const p = spawn(cmd, [...pre, ...args, '--console=plain'], { cwd: root, env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   // stdin stays open (never written): server consoles (run-paper/Loom runServer) treat EOF as input and spin printing prompts.
   p.stdin!.on('error', () => {});
