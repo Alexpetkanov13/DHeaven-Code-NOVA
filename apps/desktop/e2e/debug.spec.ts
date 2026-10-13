@@ -81,6 +81,7 @@ test('debug: breakpoint hit, local variable, watch + console evaluate, step, con
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(state(page)).toHaveAttribute('data-debug-state', 'terminated', { timeout: 60_000 });
   await expect(page.getByLabel('Debug Console')).toContainText('Hello, NOVA!');
-  await expect(page.getByLabel('Debug Console')).toContainText('exited with code 0');
+  // java-debug reports the exit code only if it reads it before the VM dies (DAP trace on Windows CI: 'terminated' without 'exited').
+  await expect(page.getByLabel('Debug Console')).toContainText(/exited with code 0|did not report an exit code/);
   await closeApp(app);
 });

@@ -74,6 +74,7 @@ export class DebugManager {
       const { conn, args } = await factory(cfg, { root, log: (s) => this.log(s), signal: abort.signal });
       if (abort.signal.aborted) { conn.close('cancelled'); return fail('Cancelled'); }
       this.conn = conn;
+      let exitedSeen = false; // java-debug sometimes sends only 'terminated' when the VM dies before it reads the exit code
       let initialized!: () => void;
       const initializedP = new Promise<void>((r) => { initialized = r; });
       conn.on('event', (event: string, body: Record<string, unknown>) => {
@@ -83,8 +84,8 @@ export class DebugManager {
         else if (event === 'stopped') { this.stopSeq++; this.set({ state: 'stopped', reason: String(body.reason ?? 'paused'), threadId: (body.threadId as number) ?? null }); }
         else if (event === 'continued') this.set({ state: 'running', reason: null, threadId: null });
         else if (event === 'terminated' || event === 'exited') {
-          if (event === 'exited') this.log(`Process exited with code ${body.exitCode}`);
-          if (event === 'terminated') { this.set({ state: 'terminated', reason: 'Debuggee terminated', threadId: null }); setTimeout(() => conn.close('terminated'), 1000); } // java-debug may send 'exited' (and trailing output) after 'terminated'
+          if (event === 'exited') { exitedSeen = true; this.log(`Process exited with code ${body.exitCode}`); }
+          if (event === 'terminated') { this.set({ state: 'terminated', reason: 'Debuggee terminated', threadId: null }); setTimeout(() => { if (!exitedSeen) this.log('Process ended (the debug adapter did not report an exit code)'); conn.close('terminated'); }, 1000); } // java-debug may send 'exited' (and trailing output) after 'terminated'
         } else if (event === 'breakpoint') this.onBreakpointEvent(body);
         this.deps.emit('debug.event.v1', { sessionId, event, body });
       });
