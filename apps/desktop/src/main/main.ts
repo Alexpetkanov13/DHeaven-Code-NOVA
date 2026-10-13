@@ -386,6 +386,9 @@ const handlers: Handlers = {
   'settings.update.v1': async (patch) => store.updateSettings(patch),
 };
 
+let bundledReady: Promise<unknown> = Promise.resolve();
+const gatedUntilBundled = (ch: string) => ch.startsWith('ext.') || ch.startsWith('template.') || ch.startsWith('workspace.') || ch === 'trust.set.v1';
+
 ipcMain.handle('nova:invoke', async (event, channel: unknown, payload: unknown): Promise<Envelope<unknown>> => {
   if (event.sender !== win?.webContents) return { ok: false, error: { code: 'INVALID_REQUEST', message: 'Unknown sender' } };
   if (!isChannel(channel)) return { ok: false, error: { code: 'UNKNOWN_CHANNEL', message: String(channel) } };
@@ -393,6 +396,7 @@ ipcMain.handle('nova:invoke', async (event, channel: unknown, payload: unknown):
   const req = spec.req.safeParse(payload ?? {});
   if (!req.success) return { ok: false, error: { code: 'INVALID_REQUEST', message: req.error.message } };
   try {
+    if (gatedUntilBundled(channel)) await bundledReady;
     const result = await (handlers[channel] as (r: unknown) => Promise<unknown>)(req.data);
     return { ok: true, result: spec.res.parse(result) };
   } catch (e) {
@@ -496,8 +500,12 @@ app.whenReady().then(async () => {
   extStore = new ExtensionStore(extDir(), app.getVersion());
   await extStore.load();
   phase('extension store loaded');
-  await installBundled(extStore, bundledDir(), (m) => console.log(`[ext] ${m}`));
-  phase('bundled extensions installed');
+  // Installing bundled extensions copies and hashes many files; on Windows (Defender scanning fresh files) a first run
+  // took 20-80 s, which kept the window from opening. Run it in the background; extension/template/workspace calls
+  // wait for it (gatedUntilBundled) so nothing observes a half-installed state.
+  bundledReady = installBundled(extStore, bundledDir(), (m) => console.log(`[ext] ${m}`))
+    .catch((e) => console.error('[ext] bundled install failed', e))
+    .finally(() => phase('bundled extensions installed'));
   templates = new TemplateService({
     fetch: (u) => net.fetch(u),
     templates: async () => (await extStore.list()).filter((x) => x.entry.enabled).flatMap((x) => x.manifest.contributes.projectTemplates.map((t) => ({
