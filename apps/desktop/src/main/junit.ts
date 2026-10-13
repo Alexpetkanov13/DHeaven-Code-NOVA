@@ -86,7 +86,8 @@ export function parseJUnitXml(xml: string): TestCase[] {
   return out;
 }
 
-export async function readResults(root: string): Promise<TestCase[]> {
+/** `since` (ms epoch): ignore result files older than this run, in case a locked file (Windows) survived clearResults. */
+export async function readResults(root: string, since = 0): Promise<TestCase[]> {
   const res: TestCase[] = [];
   const dirs = [path.join(root, 'build', 'test-results')];
   try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) dirs.push(path.join(root, e.name, 'build', 'test-results')); } catch { /* ignore */ }
@@ -94,15 +95,19 @@ export async function readResults(root: string): Promise<TestCase[]> {
     let tasks: string[] = []; try { tasks = await fs.readdir(d); } catch { continue; }
     for (const t of tasks) {
       let files: string[] = []; try { files = (await fs.readdir(path.join(d, t))).filter((f) => /^TEST-.*\.xml$/.test(f)); } catch { continue; }
-      for (const f of files) res.push(...parseJUnitXml(await fs.readFile(path.join(d, t, f), 'utf8')));
+      for (const f of files) {
+        const fp = path.join(d, t, f);
+        if (since && (await fs.stat(fp).then((st) => st.mtimeMs, () => 0)) < since - 2000) continue;
+        res.push(...parseJUnitXml(await fs.readFile(fp, 'utf8')));
+      }
     }
   }
   return res;
 }
 
 export async function clearResults(root: string) {
-  await rmRetry(path.join(root, 'build', 'test-results'));
-  try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) await rmRetry(path.join(root, e.name, 'build', 'test-results')); } catch { /* ignore */ }
+  await rmRetry(path.join(root, 'build', 'test-results')).catch(() => {});
+  try { for (const e of await fs.readdir(root, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.')) await rmRetry(path.join(root, e.name, 'build', 'test-results')).catch(() => {}); } catch { /* ignore */ }
 }
 
 /** Gradle args for running tests. `--rerun` (Gradle ≥7.6) forces execution even when the task is up to date. */

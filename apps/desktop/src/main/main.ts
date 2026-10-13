@@ -280,6 +280,7 @@ const handlers: Handlers = {
     const root = (await requireTrust()).root; const info = await detectGradle(root);
     if (!info.isGradle) throw new AppError('NOT_FOUND', 'Test runs need a Gradle project');
     const runId = ++gradleSeq;
+    const startedAt = Date.now();
     await clearResults(root);
     let tail = ''; let announced = false;
     const p = runGradle(root, info, testArgs(filters, !!debug), await gradleEnv(root), (data) => {
@@ -287,7 +288,7 @@ const handlers: Handlers = {
       if (debug && !announced) { tail = (tail + data).slice(-4096); const m = DEBUG_LISTEN_RE.exec(tail); if (m) { announced = true; emit('tests.debugReady.v1', { runId, port: Number(m[1]) }); } }
     }, (code) => {
       const killed = gradleKilled.delete(runId); testRuns.delete(runId);
-      void readResults(root).then((results) => emit('tests.done.v1', { runId, code, killed, results, error: null, debugPort: null }))
+      void readResults(root, startedAt).then((results) => emit('tests.done.v1', { runId, code, killed, results, error: null, debugPort: null }))
         .catch((e) => emit('tests.done.v1', { runId, code, killed, results: [], error: String(e), debugPort: null }));
     });
     testRuns.set(runId, p);
