@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { DapConnection } from './connection';
@@ -37,7 +38,7 @@ export function javaAdapter(d: JavaDeps): AdapterFactory {
       for (;;) {
         if (signal.aborted) throw new Error('Cancelled');
         try {
-          const mains = ((await d.exec('vscode.java.resolveMainClass', [root], 60_000)) ?? []) as { mainClass: string; projectName: string; filePath: string }[];
+          const mains = ((await d.exec('vscode.java.resolveMainClass', [pathToFileURL(root).toString()], 60_000)) ?? []) as { mainClass: string; projectName: string; filePath: string }[];
           const hit = mainClass ? mains.find((m) => m.mainClass === mainClass) : mains[0];
           if (hit) { mainClass = hit.mainClass; projectName ||= hit.projectName; break; }
           lastErr = new Error(mainClass ? `Main class ${mainClass} not found in the workspace` : 'No main class found in the workspace');
@@ -61,7 +62,12 @@ export function javaAdapter(d: JavaDeps): AdapterFactory {
     } else {
       args = { type: 'java', name: cfg.name, request: 'attach', hostName: cfg.hostName || 'localhost', port: cfg.port ?? 5005, projectName: projectName || undefined, timeout: 30_000 };
     }
-    const port = Number(await d.exec('vscode.java.startDebugSession', [], 30_000));
+    // JDT LS cancels in-flight commands (-32800) while it re-imports/builds the project (slow on Windows); retry those.
+    let port = NaN;
+    for (let i = 0; ; i++) {
+      try { port = Number(await d.exec('vscode.java.startDebugSession', [], 30_000)); break; }
+      catch (e) { if (i >= 5 || signal.aborted || !/cancel/i.test(String((e as Error)?.message ?? e))) throw e; log('startDebugSession was cancelled by JDT LS (project build in progress); retrying…'); await sleep(2000, signal); }
+    }
     if (!Number.isInteger(port) || port <= 0) throw new Error(`java-debug returned no port (${port}); is the debug bundle loaded?`);
     log(`Connecting to java-debug on 127.0.0.1:${port}`);
     const sock = await DapConnection.connect(port);
