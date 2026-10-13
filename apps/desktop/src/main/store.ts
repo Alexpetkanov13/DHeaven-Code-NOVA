@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { RecentEntry, Settings, SettingsPatch } from '@nova/ipc-contract';
+import { RecentEntry, SessionState, Settings, SettingsPatch } from '@nova/ipc-contract';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { atomicWrite } from './atomicWrite';
 
@@ -39,5 +40,25 @@ export class Store {
     await fs.mkdir(this.dir, { recursive: true });
     await atomicWrite(this.recentFile, JSON.stringify(list, null, 2));
     return list;
+  }
+  private sessionFile(root: string) { return path.join(this.dir, 'sessions', `${crypto.createHash('sha256').update(root).digest('hex').slice(0, 24)}.json`); }
+  async getSession(root: string): Promise<SessionState | null> {
+    const raw = (await readJson(this.sessionFile(root))) as { root?: string; state?: unknown } | undefined;
+    if (!raw || raw.root !== root) return null;
+    const parsed = SessionState.safeParse(raw.state);
+    return parsed.success ? parsed.data : null;
+  }
+  /** Drafts above a total of 32 MB are dropped (largest first) so a session file stays bounded. */
+  async saveSession(root: string, state: SessionState): Promise<void> {
+    const drafts = [...state.drafts].sort((a, b) => a.content.length - b.content.length);
+    let total = 0; const kept = drafts.filter((d) => (total += d.content.length) <= 32 * 1024 * 1024);
+    await fs.mkdir(path.dirname(this.sessionFile(root)), { recursive: true });
+    await atomicWrite(this.sessionFile(root), JSON.stringify({ root, state: { ...state, drafts: kept } }));
+  }
+  /** The most recently opened workspace, if its folder still exists. */
+  async lastWorkspace(): Promise<string | null> {
+    const r = (await this.listRecent())[0];
+    if (!r) return null;
+    return (await fs.stat(r.root).then((s) => s.isDirectory(), () => false)) ? r.root : null;
   }
 }

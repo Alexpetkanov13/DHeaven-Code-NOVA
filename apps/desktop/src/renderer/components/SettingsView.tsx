@@ -16,6 +16,9 @@ export function SettingsView({ settings, onChange }: { settings: Settings; onCha
       <label>Minimap
         <input type="checkbox" checked={settings.editorMinimap} onChange={(e) => onChange({ editorMinimap: e.target.checked })} />
       </label>
+      <label>Restore last session (workspace, editors, unsaved changes)
+        <input type="checkbox" checked={settings.restoreSession} onChange={(e) => onChange({ restoreSession: e.target.checked })} />
+      </label>
       <label>Mode
         <select value={settings.mode} onChange={(e) => onChange({ mode: e.target.value as Settings['mode'] })}>
           <option value="focus">Focus</option><option value="nova">NOVA</option>

@@ -15,7 +15,7 @@ async function launch(userData: string): Promise<ElectronApplication> {
   return electron.launch({ args, cwd: appDir, env: { ...process.env, NOVA_USER_DATA: userData } });
 }
 
-test('open folder, edit, save, relaunch shows recent', async () => {
+test('open folder, edit, save, relaunch restores the workspace', async () => {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-e2e-'));
   const ws = path.join(tmp, 'sample-workspace');
   await fs.cp(fixture, ws, { recursive: true });
@@ -66,7 +66,11 @@ test('open folder, edit, save, relaunch shows recent', async () => {
 
   app = await launch(userData);
   page = await app.firstWindow();
-  await expect(page.getByRole('list', { name: 'Recent workspaces' })).toContainText('sample-workspace');
+  // Session restore: the last workspace and its editor come back (no unsaved changes -> no draft)
+  await expect(page.getByLabel('Sidebar')).toContainText('sample-workspace');
+  await expect(page.locator('.tab.active')).toContainText('hello.ts');
+  await expect(page.locator('.tab.active .dirty')).toHaveCount(0);
+  expect(await page.evaluate(() => window.nova.invoke('recent.list.v1', {}))).toMatchObject({ ok: true, result: [{ name: 'sample-workspace' }] });
   const settings = JSON.parse(await fs.readFile(path.join(userData, 'settings.json'), 'utf8').catch(() => '{}'));
   expect(typeof settings).toBe('object');
   await closeApp(app);

@@ -66,10 +66,9 @@ test('split editors: split right/down, shared models, drag tab between groups, l
   await expect(tabsOf(page, 2).first().getByLabel('unsaved changes')).toHaveCount(0);
   await closeApp(app);
 
-  // Relaunch: reopen the workspace from Recent -> both groups and their tabs come back
+  // Relaunch: the workspace is restored with both groups and their tabs
   app = await launch(ud);
   page = await app.firstWindow();
-  await page.getByRole('list', { name: 'Recent workspaces' }).getByRole('button').first().click();
   await expect(tabsOf(page, 1)).toHaveText(['math.ts×', 'hello.ts×']);
   await expect(tabsOf(page, 2)).toHaveText(['hello.ts×']);
   await expect(page.getByLabel('Editor 2').locator('.view-lines')).toContainText('// from group 2');

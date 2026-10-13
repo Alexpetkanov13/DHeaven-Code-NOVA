@@ -56,6 +56,7 @@ const devUrl = process.env.NOVA_DEV_URL; // e.g. http://localhost:5173 when runn
 const rendererDir = path.join(__dirname, '../renderer');
 let store: Store;
 let workspace: WorkspaceInfo | null = null;
+let sessionFlushed = false; // hot exit: the renderer saves its session (incl. unsaved buffers) before the window closes
 let win: BrowserWindow | null = null;
 let watcher: CoalescingWatcher | null = null;
 let trust: TrustStore;
@@ -193,6 +194,13 @@ const handlers: Handlers = {
     searches.add(r.searchId);
     return r;
   },
+  'session.get.v1': async () => (workspace ? store.getSession(workspace.root) : null),
+  'session.save.v1': async ({ root, final, ...st }) => {
+    if (workspace && workspace.root === root) await store.saveSession(root, st);
+    if (final) { sessionFlushed = true; setImmediate(() => win?.close()); }
+    return null;
+  },
+  'session.last.v1': async () => { const s = await store.getSettings(); if (!s.restoreSession) return null; const root = await store.lastWorkspace(); return root ? { root } : null; },
   'files.list.v1': async () => daemon.call<{ files: string[]; truncated: boolean }>('files.list', { root: needWs().root, max: 50_000 }),
   'search.cancel.v1': async ({ searchId }) => { await daemon.call('search.cancel', { searchId }); return null; },
   'replace.apply.v1': async (p) => applyReplace(needWs().root, p.rels, p.query, p.isRegex, p.caseSensitive, p.replacement),
@@ -442,6 +450,12 @@ async function createWindow() {
     },
   });
   win.once('ready-to-show', () => { phase('ready-to-show'); win?.show(); });
+  win.on('close', (e) => {
+    if (sessionFlushed || !workspace || !win || win.webContents.isCrashed()) return;
+    e.preventDefault();
+    win.webContents.send('nova:menu', 'session.flush');
+    setTimeout(() => { sessionFlushed = true; win?.close(); }, 1500).unref(); // renderer unresponsive: close anyway
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };

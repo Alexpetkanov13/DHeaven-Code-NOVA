@@ -34,8 +34,15 @@ export const Settings = z.object({
   javaHome: z.string().max(4096).nullable().default(null),
   colorTheme: z.string().max(256).default('nova-dark'),
   terminalProfile: z.string().max(64).nullable().default(null),
+  restoreSession: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof Settings>;
+
+/** Hot-exit session per workspace: editor layout, per-group view states and unsaved buffers (drafts). */
+export const SessionDraft = z.object({ rel: z.string().min(1).max(4096), content: z.string().max(5 * 1024 * 1024), baseMtimeMs: z.number() });
+export type SessionDraft = z.infer<typeof SessionDraft>;
+export const SessionState = z.object({ layout: z.unknown(), views: z.unknown(), drafts: z.array(SessionDraft).max(100), savedAt: z.number() });
+export type SessionState = z.infer<typeof SessionState>;
 export const SettingsPatch = Settings.partial().omit({ version: true });
 
 const ExtId = z.string().max(256).regex(/^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/);
@@ -183,6 +190,9 @@ export const channels = {
     z.object({ query: z.string().min(1).max(1000), isRegex: z.boolean().default(false), caseSensitive: z.boolean().default(false), maxResults: z.number().int().min(1).max(20000).default(5000) }),
     z.object({ searchId: z.number() }),
   ),
+  'session.get.v1': def(z.object({}), SessionState.nullable()),
+  'session.save.v1': def(SessionState.extend({ root: z.string(), final: z.boolean().optional() }), z.null()),
+  'session.last.v1': def(z.object({}), z.object({ root: z.string() }).nullable()),
   'files.list.v1': def(z.object({}), z.object({ files: z.array(z.string()), truncated: z.boolean() })),
   'search.cancel.v1': def(z.object({ searchId: z.number() }), z.null()),
   'replace.apply.v1': def(

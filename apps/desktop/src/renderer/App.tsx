@@ -34,7 +34,8 @@ import { MinecraftView } from './components/MinecraftView';
 import { NavHistory } from './lib/navHistory';
 import { flatten, symbolPathAt, type Sym } from './lib/outline';
 import type { PickerOptions } from './components/CommandPalette';
-import { EditorPane } from './components/EditorPane';
+import { EditorPane, type ViewStates } from './components/EditorPane';
+import type { SessionDraft } from '@nova/ipc-contract';
 import { closeIn, emptyLayout, fromSaved, moveTab, openIn, reconcile, split, toSaved, type Layout } from './lib/layout';
 
 type DiskState = 'ok' | 'changed' | 'deleted';
@@ -90,6 +91,8 @@ export function App() {
   editorRef.current = editorsRef.current.get(layout.groups[layout.activeGroup]?.id ?? -1) ?? null;
   const pendingRename = useRef<((rel: string) => string) | null>(null);
   const layoutRestored = useRef<string | null>(null);
+  const restoredViews = useRef<ViewStates[] | null>(null);
+  const viewGetters = useRef(new Map<number, () => ViewStates>()); // by group id
   const [dropGroup, setDropGroup] = useState<number | null>(null);
   const diffEdRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const tabsRef = useRef(tabs); tabsRef.current = tabs;
@@ -139,6 +142,7 @@ export function App() {
   useEffect(() => {
     void call('settings.get.v1', {}).then(setSettings).catch(fail);
     void call('recent.list.v1', {}).then(setRecent).catch(fail);
+    void call('session.last.v1', {}).then((r) => { if (r && !wsRef.current) void call('workspace.open.v1', { root: r.root }).then((info) => adoptRef.current(info)).catch(fail); }).catch(() => {});
     void call('daemon.status.v1', {}).then((r) => setDaemon((d) => (d === 'starting' ? r.state : d))).catch(fail);
     return on('daemon.status.v1', (p) => { setDaemon(p.state); out(`novad ${p.state}${p.message ? `: ${p.message}` : ''}`, p.state === 'failed'); });
   }, [fail, out]);
@@ -174,6 +178,7 @@ export function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- restoreLayout is stable (refs only)
   }, [loadDir, out, askTrust, extClient]);
 
+  const adoptRef = useRef(adoptWorkspace); adoptRef.current = adoptWorkspace;
   const openFolder = useCallback(() => call('workspace.openDialog.v1', {}).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
   const openRecent = useCallback((root: string) => call('workspace.open.v1', { root }).then(adoptWorkspace).catch(fail), [adoptWorkspace, fail]);
 
@@ -194,19 +199,77 @@ export function App() {
     }
     return true;
   }, [fail]);
+  const addDraftTab = (rel: string, content: string) => {
+    const model = monaco.editor.getModel(modelUri(rel)) ?? monaco.editor.createModel('', undefined, modelUri(rel));
+    const savedAltId = model.getAlternativeVersionId();
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: content }], () => null);
+    model.onDidChangeContent(() => bump((n) => n + 1));
+    bridgeRef.current?.attach(model);
+    const tab: Tab = { rel, model, savedAltId, mtimeMs: 0, disk: 'deleted' };
+    tabsRef.current = [...tabsRef.current, tab]; setTabs((ts) => [...ts, tab]);
+  };
+  /** Hot-exit restore: layout + view states, then unsaved drafts re-applied on top of the disk content (conflicts are flagged). */
   const restoreLayout = async (root: string) => {
-    let saved: Layout | null = null;
-    try { saved = fromSaved(JSON.parse(localStorage.getItem(`nova.layout.v1:${root}`) ?? 'null')); } catch { saved = null; }
-    if (saved && wsRef.current?.root === root) {
-      const all = [...new Set(saved.groups.flatMap((g) => g.rels))];
+    const sess = await call('session.get.v1', {}).catch(() => null);
+    if (sess && wsRef.current?.root === root) {
+      const saved = fromSaved(sess.layout);
+      const drafts = sess.drafts;
+      const want = [...new Set([...(saved?.groups.flatMap((g) => g.rels) ?? []), ...drafts.map((d) => d.rel)])];
       const ok = new Set<string>();
-      for (const rel of all) if (await ensureTab(rel, false)) ok.add(rel);
+      for (const rel of want) if (await ensureTab(rel, false)) ok.add(rel);
       if (wsRef.current?.root !== root) return;
-      const l = reconcile(saved, ok);
+      const conflicts: SessionDraft[] = [];
+      for (const d of drafts) {
+        const t = tabsRef.current.find((x) => x.rel === d.rel);
+        if (!t) { addDraftTab(d.rel, d.content); ok.add(d.rel); out(`Restored unsaved changes to ${d.rel} (the file no longer exists on disk)`); continue; }
+        const disk = t.model.getValue();
+        if (disk === d.content) continue;
+        if (Math.abs(t.mtimeMs - d.baseMtimeMs) > 1) conflicts.push(d);
+        t.model.pushEditOperations([], [{ range: t.model.getFullModelRange(), text: d.content }], () => null);
+      }
+      if (conflicts.length) {
+        const rels = new Set(conflicts.map((c) => c.rel));
+        setTabs((ts) => ts.map((x) => (rels.has(x.rel) ? { ...x, disk: 'changed' } : x)));
+        setDialog({ kind: 'confirm', confirmLabel: 'Keep My Changes', list: [...rels],
+          message: `${rels.size} file(s) changed on disk after NOVA kept your unsaved changes. Keep your restored changes (saving will overwrite the disk version), or use the version on disk?`,
+          confirm: () => setDialog(null),
+          extra: { label: 'Use Disk Version', run: () => { setDialog(null); void (async () => {
+            for (const rel of rels) {
+              const t = tabsRef.current.find((x) => x.rel === rel); if (!t) continue;
+              const { content, mtimeMs } = await call('fs.read.v1', { rel }).catch(() => ({ content: t.model.getValue(), mtimeMs: t.mtimeMs }));
+              t.model.setValue(content);
+              setTabs((ts) => ts.map((x) => (x.rel === rel ? { ...x, mtimeMs, disk: 'ok', savedAltId: x.model.getAlternativeVersionId() } : x)));
+            }
+          })(); } } });
+      }
+      let l = saved ? reconcile(saved, ok) : emptyLayout();
+      for (const rel of ok) if (!l.groups.some((g) => g.rels.includes(rel))) l = openIn(l, l.activeGroup, rel);
+      restoredViews.current = Array.isArray(sess.views) ? (sess.views as ViewStates[]) : null;
       setLayout(l); setActive(l.groups[l.activeGroup]?.active ?? null);
+      setTimeout(() => { restoredViews.current = null; }, 2000);
     }
     layoutRestored.current = root;
   };
+  // Session snapshot (debounced on every render that changes something; flushed when the window closes).
+  const sessionSnapshot = () => {
+    const ws0 = wsRef.current; if (!ws0 || layoutRestored.current !== ws0.root) return null;
+    const l = layoutRef.current;
+    const drafts = tabsRef.current.filter((t) => t.model.getAlternativeVersionId() !== t.savedAltId && t.model.getValueLength() <= 5 * 1024 * 1024)
+      .map((t) => ({ rel: t.rel, content: t.model.getValue(), baseMtimeMs: t.mtimeMs }));
+    const views = l.groups.map((g) => viewGetters.current.get(g.id)?.() ?? {});
+    return { root: ws0.root, layout: toSaved(l), views, drafts, savedAt: Date.now() };
+  };
+  const lastSession = useRef('');
+  const saveSession = (final = false) => {
+    const snap = sessionSnapshot();
+    if (!snap) { if (final) void call('session.save.v1', { root: '', layout: null, views: null, drafts: [], savedAt: 0, final: true }).catch(() => {}); return; }
+    const key = JSON.stringify({ ...snap, savedAt: 0 });
+    if (!final && key === lastSession.current) return;
+    lastSession.current = key;
+    void call('session.save.v1', final ? { ...snap, final: true } : snap).catch(() => {});
+  };
+  const saveSessionRef = useRef(saveSession); saveSessionRef.current = saveSession;
+  useEffect(() => { const h = window.setTimeout(() => saveSessionRef.current(), 400); return () => window.clearTimeout(h); });
   const openFile = useCallback(async (rel: string, line?: number, col?: number) => {
     if (!(await ensureTab(rel))) return;
     setActive(rel);
@@ -455,17 +518,16 @@ export function App() {
   }, [active, tabs]);
   useEffect(() => {
     const ren = pendingRename.current; pendingRename.current = null;
-    setLayout((l) => reconcile(l, new Set(tabs.map((t) => t.rel)), ren ?? undefined));
+    // tabsRef, not the closure: an effect from an older render may run after a newer layout was set (e.g. session restore)
+    setLayout((l) => reconcile(l, new Set(tabsRef.current.map((t) => t.rel)), ren ?? undefined));
   }, [tabs]);
   useEffect(() => {
     const a = activeRef.current; if (a === SETTINGS_TAB || a === DIFF_TAB) return;
     const g = layout.groups[layout.activeGroup];
     if (g && g.active !== a) setActive(g.active);
-    const root = wsRef.current?.root;
-    if (root && layoutRestored.current === root) try { localStorage.setItem(`nova.layout.v1:${root}`, JSON.stringify(toSaved(layout))); } catch { /* quota */ }
   }, [layout]);
   const focusGroup = useCallback((gi: number) => {
-    const l = layoutRef.current; if (gi === l.activeGroup && activeRef.current === l.groups[gi]?.active) return;
+    const l = layoutRef.current; if (gi === l.activeGroup) return; // already focused (don't race a pending open in this group)
     setLayout({ ...l, activeGroup: gi }); setActive(l.groups[gi]?.active ?? null);
   }, []);
   const splitEditor = useCallback((dir: 'row' | 'column') => {
@@ -651,6 +713,7 @@ export function App() {
   const commandsRef = useRef(commands); commandsRef.current = commands;
   useEffect(() => window.nova.onMenu((id) => {
     if (id === 'workbench.commandPalette') setPalette(true);
+    else if (id === 'session.flush') saveSessionRef.current(true);
     else commandsRef.current.find((c) => c.id === id)?.run();
   }), []);
   useEffect(() => {
@@ -795,6 +858,7 @@ export function App() {
                     )}
                     <EditorPane model={gTab?.model ?? null} visible={!special} label={`Editor ${gi + 1}`} options={editorOptions}
                       setup={(ed) => { editorsRef.current.set(g.id, ed); setEditorsVer((v) => v + 1); const undo = setupEditor(ed); return () => { undo(); editorsRef.current.delete(g.id); }; }}
+                      initialViews={restoredViews.current?.[gi]} exposeViews={(get) => viewGetters.current.set(g.id, get)}
                       onFocus={() => focusGroup(gi)}
                       onShown={(ed) => { if (gi !== layoutRef.current.activeGroup) return; const p = ed.getPosition(); if (p && g.active && Date.now() > navigating.current) nav.push({ rel: g.active, line: p.lineNumber, col: p.column }); setCursor({ ln: p?.lineNumber ?? 1, col: p?.column ?? 1 }); }} />
                   </div>
