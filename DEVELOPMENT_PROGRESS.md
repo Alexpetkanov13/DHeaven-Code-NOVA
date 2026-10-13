@@ -1,6 +1,26 @@
 # Development Progress
 
-## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test runs + Python debugging. CI runs unit + E2E on Linux and Windows.
+## Status: Phases 1–6 + Minecraft developer pack + TS/Python/Rust language servers + pytest/cargo test/Vitest/Jest runs + Python debugging. CI runs unit + E2E on Linux and Windows.
+
+## Probe race fix (found by a flaky unit test)
+- **Bug:** `probeExecutable` (`--version` of external language servers) resolved on the child's `exit` event, which can fire before its stdout is fully read. Under load the version was lost, and the card showed "version unknown" for a working server. `probeDebugpy` had the same race, where it would have reported a spurious "import failed (exit 0)". The debugpy adapter stream was also destroyed on `exit`, which could drop the adapter's final events.
+- **Found by:** the external-server manager test failed 1 in 8 full parallel `vitest run`s; the diff showed `version: "version unknown"`.
+- **Fix:** all three wait for `close` (stdio drained). After the fix: 0 failures in 10 full runs; Python debugger unit (5) and E2E (2) still pass.
+- **CI on `0d7843e` (Python debugging): green on ubuntu-latest and windows-latest.**
+
+## Testing view: Vitest and Jest (2026-10-13, ADR-0019 addendum)
+- **`main/testing/js.ts`:** detects the runner from the root `package.json` (vitest preferred over jest).
+  - Static scan of `*.test|spec.*` / `__tests__` for `describe`/`it`/`test` with literal names; nesting by braces, with strings and comments stripped.
+  - Ids are `file::a > b`.
+- **Launch:** `node <runner bin entry from node_modules>` (no shell or `.cmd`).
+- **Results:** Vitest's JUnit report (with captured stdout) and Jest's `--json` report (`todo` counts as skipped; a file that fails to load becomes one error result).
+- **Filters:** whole files are positional; named tests use an exact `-t ^(?:…)$`, and mixed runs use two invocations.
+- **Fixtures:** `fixtures/js-vitest` (TS, vitest 3.2.7) and `fixtures/js-jest` (JS, jest 30.5.2), each with a `package-lock.json`. The E2E runs `npm ci` in its temp copy.
+
+| Check | Command | Result |
+|---|---|---|
+| Unit | `vitest run src/main/testing` | PASS 23: scan (nesting, modifiers, quotes, comments, member-call look-alikes, dynamic names skipped), fixture discovery, plan/args (escaped exact `-t`, Jest path regex matches `\` and `/`), missing-runner message, and **real reports** (`__data__/vitest.xml` from vitest 3.2.7, `__data__/jest.json` from jest 30.5.2) |
+| E2E | `xvfb-run -a npx playwright test e2e/testing-langs.spec.ts -g "vitest\|jest"` | PASS 2/2. Vitest: Run All 3/1/1, Exit 1; failure message; captured `greeting NOVA`; Rerun Failed uses `-t ^(?:greet punctuation deliberate failure)$`; a single test → Exit 0; the file ▶ → Exit 1. Jest: same flow, 2/1/1 (todo counts as skipped) |
 
 ## Python debugging with debugpy (2026-10-13, ADR-0020)
 - **`main/dap/python.ts`: a second DAP adapter** next to java-debug, using the existing generic `DebugManager`.
@@ -85,14 +105,14 @@ Screenshots: `nova-typescript.png`, `nova-rust.png`, `nova-python.png`, `nova-ls
 
 ### Limitations
 - No Python interpreter/venv picker (Pyright uses PATH python or its own config); Pyright has no formatter.
-- No DAP for TS/JS or Rust (Python: debugpy since ADR-0020; tests: pytest and cargo test since ADR-0019; no JS runners).
+- No DAP for TS/JS or Rust (Python: debugpy since ADR-0020; tests: pytest, cargo test, Vitest and Jest since ADR-0019).
 - Go to definition into non-workspace files (lib.d.ts, Rust std, JDK) is not browsable.
 - Semantic tokens, inlay hints, code lens and pull diagnostics aren't rendered (refresh requests are acknowledged and ignored).
 - The TS gate relies on Monaco internals (`tsMode.js` `Adapter` export); re-check on Monaco upgrades. The E2E's "no *Cannot find module*" assertion guards it.
 - Ctrl+S is a native menu accelerator, so E2E saves through the command palette (synthetic keys don't reach menu accelerators); real keyboard input is unaffected.
 
 ### Next slice (by dependency/value)
-1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: vitest/jest/node:test, and DAP for js-debug (Node) and CodeLLDB (Rust). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
+1. ~~Test explorer for `cargo test` and pytest~~ (done, ADR-0019). Still open: node:test/Mocha, and DAP for js-debug (Node) and CodeLLDB (Rust). Vitest/Jest are done (ADR-0019 addendum). Python debugging is done (ADR-0020). The DAP layer is already generic (ADR-0014).
 2. Python interpreter/venv picker (discover `.venv`, `venv`, conda, PATH), passed to Pyright via `workspace/configuration` (`python.pythonPath`) and to run/test/debug.
 3. Semantic tokens and inlay hints from LSP (servers already advertise them; the refresh requests are wired).
 4. Read-only virtual documents for out-of-workspace definitions (lib.d.ts, Rust std, `jdt://` class files).

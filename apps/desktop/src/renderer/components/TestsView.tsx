@@ -5,7 +5,7 @@ import { aggregate, covers, resultsFor, targetsForNodes, toTargets, under, type 
 
 interface Props { trusted: boolean; hasWorkspace: boolean; onError(e: unknown): void; onOpen(rel: string, line: number): void; onLog(s: string): void }
 const ICON: Record<string, string> = { passed: '✔', failed: '✘', error: '⚠', skipped: '⊘', running: '…' };
-const FW: Record<string, string> = { gradle: 'JUnit · Gradle', pytest: 'pytest', cargo: 'cargo test' };
+const FW: Record<string, string> = { gradle: 'JUnit · Gradle', pytest: 'pytest', cargo: 'cargo test', vitest: 'Vitest', jest: 'Jest' };
 
 /**
  * Tests from Gradle/JUnit, pytest and cargo test: static source-scan discovery (nothing runs until you press Run, and
@@ -99,7 +99,7 @@ export function TestsView({ trusted, hasWorkspace, onError, onOpen, onLog }: Pro
         </div>
       </div>
       <div className="test-tree" aria-label="Test tree">
-        {!nodes.length && <div className="muted pad">No tests found. NOVA looks for JUnit tests under src/test/java|kotlin (Gradle), pytest test_*.py / *_test.py files, and Rust #[test] functions (Cargo.toml).</div>}
+        {!nodes.length && <div className="muted pad">No tests found. NOVA looks for JUnit tests under src/test/java|kotlin (Gradle), pytest test_*.py / *_test.py files, Rust #[test] functions (Cargo.toml), and *.test / *.spec files when package.json lists vitest or jest.</div>}
         {[...byFile].map(([rel, ns]) => (
           <div key={rel}>
             <div className="file test-file" data-test-file={rel}>

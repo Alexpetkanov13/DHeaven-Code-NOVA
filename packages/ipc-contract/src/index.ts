@@ -170,7 +170,7 @@ export const DebugStatus = z.object({
 });
 export type DebugStatus = z.infer<typeof DebugStatus>;
 export const DAP_COMMANDS = ['threads', 'stackTrace', 'scopes', 'variables', 'continue', 'next', 'stepIn', 'stepOut', 'pause', 'evaluate', 'source', 'setVariable', 'exceptionInfo'] as const;
-export const TestFramework = z.enum(['gradle', 'pytest', 'cargo']);
+export const TestFramework = z.enum(['gradle', 'pytest', 'cargo', 'vitest', 'jest']);
 export type TestFramework = z.infer<typeof TestFramework>;
 export const TestCase = z.object({ id: z.string(), framework: TestFramework, name: z.string(), status: z.enum(['passed', 'failed', 'skipped', 'error']), timeMs: z.number().nullable(), message: z.string().nullable(), stack: z.string().nullable(), stdout: z.string() });
 export type TestCase = z.infer<typeof TestCase>;
@@ -268,7 +268,7 @@ export const channels = {
   'tests.discover.v1': def(z.object({}), z.array(TestNode)),
   /** targets: [] = every framework detected in the workspace. Filters are passed as separate argv entries (never a shell); a leading '-' is refused so a filter can't become an option. */
   'tests.run.v1': def(z.object({
-    targets: z.array(z.object({ framework: TestFramework, filters: z.array(z.string().min(1).max(1000).regex(/^[^-\s][^\r\n\0]*$/)).max(500) })).max(3),
+    targets: z.array(z.object({ framework: TestFramework, filters: z.array(z.string().min(1).max(1000).regex(/^[^-\s][^\r\n\0]*$/)).max(500) })).max(5),
     debug: z.boolean().optional(),
   }), z.object({ runId: z.number() })),
   'tests.cancel.v1': def(z.object({ runId: z.number() }), z.null()),

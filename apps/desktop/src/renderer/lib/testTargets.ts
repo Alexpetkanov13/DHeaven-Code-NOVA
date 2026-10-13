@@ -12,8 +12,8 @@ export const leavesOf = (g: TestNode, all: TestNode[]) => all.filter((n) => n.me
 export function filtersFor(n: TestNode, all: TestNode[]): string[] {
   if (n.method) return [n.id];
   if (n.framework === 'gradle') return [n.className];
-  if (n.framework === 'pytest') return [n.id];
-  return leavesOf(n, all).map((l) => l.id);
+  if (n.framework === 'cargo') return leavesOf(n, all).map((l) => l.id);
+  return [n.id]; // pytest node id; vitest/jest: the file (group) or `file::a > b`
 }
 
 /** Drops filters already covered by a broader one (pytest `file` covers `file::Class`), keeps order, de-duplicates. */

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="5" failures="1" errors="0" time="0.014231828">
+    <testsuite name="src/greeter.test.ts" timestamp="2026-10-13T00:00:00Z" hostname="h" tests="5" failures="1" errors="0" skipped="1" time="0.014231828">
+        <testcase classname="src/greeter.test.ts" name="greet &gt; greets by name" time="0.00282391">
+            <system-out>
+greeting NOVA
+
+            </system-out>
+        </testcase>
+        <testcase classname="src/greeter.test.ts" name="greet &gt; punctuation &gt; uses a custom mark" time="0.000352001">
+        </testcase>
+        <testcase classname="src/greeter.test.ts" name="greet &gt; punctuation &gt; deliberate failure" time="0.009114746">
+            <failure message="expected &apos;Hello, NOVA?&apos; to be &apos;Hello, NOVA!&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;Hello, NOVA?&apos; to be &apos;Hello, NOVA!&apos; // Object.is equality
+
+Expected: &quot;Hello, NOVA!&quot;
+Received: &quot;Hello, NOVA?&quot;
+
+ ❯ src/greeter.test.ts:16:34
+            </failure>
+        </testcase>
+        <testcase classname="src/greeter.test.ts" name="greet &gt; not implemented yet" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="src/greeter.test.ts" name="top level &amp; &quot;quoted&quot; name" time="0.000434353">
+        </testcase>
+    </testsuite>
+</testsuites>

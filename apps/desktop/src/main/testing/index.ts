@@ -2,15 +2,16 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { discoverTests, type TestFramework, type TestNode } from '../junit';
 import { discoverPytest } from './pytest';
 import { discoverCargo } from './cargo';
+import { discoverJs } from './js';
 
 /** Static discovery for every supported framework (no project code runs; safe in Restricted Mode). */
 export async function discoverAllTests(root: string): Promise<TestNode[]> {
-  const [gradle, pytest, cargo] = await Promise.all([discoverTests(root), discoverPytest(root), discoverCargo(root)]);
-  return [...gradle, ...pytest, ...cargo];
+  const [gradle, pytest, cargo, js] = await Promise.all([discoverTests(root), discoverPytest(root), discoverCargo(root), discoverJs(root)]);
+  return [...gradle, ...pytest, ...cargo, ...js];
 }
 
 export function frameworksOf(nodes: TestNode[]): TestFramework[] {
-  return (['gradle', 'pytest', 'cargo'] as const).filter((f) => nodes.some((n) => n.framework === f));
+  return (['gradle', 'pytest', 'cargo', 'vitest', 'jest'] as const).filter((f) => nodes.some((n) => n.framework === f));
 }
 
 /** Gradle `--tests` patterns keep the original, stricter alphabet (class/method names and wildcards). */

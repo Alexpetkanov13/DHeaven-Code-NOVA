@@ -2,7 +2,7 @@ import { rmRetry } from './fsRetry';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type TestFramework = 'gradle' | 'pytest' | 'cargo';
+export type TestFramework = 'gradle' | 'pytest' | 'cargo' | 'vitest' | 'jest';
 export interface TestNode { id: string; framework: TestFramework; label: string; className: string; method: string | null; rel: string; line: number }
 export interface TestCase { id: string; framework: TestFramework; name: string; status: 'passed' | 'failed' | 'skipped' | 'error'; timeMs: number | null; message: string | null; stack: string | null; stdout: string }
 

@@ -25,6 +25,8 @@ import { clearResults, DEBUG_LISTEN_RE, readResults, testArgs, type TestCase, ty
 import { discoverAllTests, frameworksOf, GRADLE_FILTER, spawnTool } from './testing';
 import { parsePytestXml, pythonFor, pytestArgs, pytestMissing, pytestXmlPath } from './testing/pytest';
 import { cargoArgs, parseCargoOutput } from './testing/cargo';
+import { jsArgs, parseJestJson, parseVitestJunit, planJs, reportPath, runnerEntry } from './testing/js';
+import { findExecutable } from './lsp/discover';
 import type { EventName, Events } from '@nova/ipc-contract';
 import { PathError, assertWithin, toRel } from './pathGuard';
 import { detectProfiles, pickProfile } from './terminalProfiles';
@@ -131,6 +133,27 @@ async function runTestTarget(root: string, runId: number, framework: TestFramewo
     const xmlText = await fs.readFile(xml, 'utf8').catch(() => null);
     await fs.rm(xml, { force: true });
     return { code: r.code, results: xmlText ? parsePytestXml(xmlText) : [], error: xmlText ? null : pytestMissing(r.output, py.command) ?? (r.code === 5 ? 'pytest collected no tests' : null) };
+  }
+  if (framework === 'vitest' || framework === 'jest') {
+    const node = await findExecutable(['node']);
+    if (!node) return { code: null, results: [], error: 'Node.js (node) was not found on PATH; it is needed to run vitest/jest.' };
+    let entry: string;
+    try { entry = await runnerEntry(root, framework); } catch (e) { return { code: null, results: [], error: e instanceof Error ? e.message : String(e) }; }
+    const plan = planJs(filters);
+    // Whole files and named tests need different invocations (-t would otherwise narrow the whole-file part too).
+    const parts: { files: string[]; pattern: string | null }[] = filters.length ? [...(plan.files.length ? [{ files: plan.files, pattern: null }] : []), ...(plan.tests ? [{ files: plan.tests.files, pattern: plan.tests.pattern }] : [])] : [{ files: [], pattern: null }];
+    const results: TestCase[] = []; let code: number | null = 0; const errors: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (gradleKilled.has(runId)) break;
+      const report = reportPath(runId, i, framework); await fs.rm(report, { force: true });
+      const args = jsArgs(entry, framework, report, parts[i]!.files, parts[i]!.pattern);
+      echo(node, args);
+      const r = await new Promise<{ code: number | null }>((resolve) => testRuns.set(runId, spawnTool(node, args, root, { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }, out, (c) => resolve({ code: c }))));
+      const rep = await fs.readFile(report, 'utf8').catch(() => null); await fs.rm(report, { force: true });
+      if (rep) { try { results.push(...(framework === 'vitest' ? parseVitestJunit(rep) : parseJestJson(rep, root))); } catch (e) { errors.push(`Could not read the ${framework} report: ${e instanceof Error ? e.message : e}`); } }
+      if (r.code !== 0 && code === 0) code = r.code;
+    }
+    return { code, results, error: errors.join('\n') || null };
   }
   const args = await cargoArgs(root, filters);
   echo('cargo', args);

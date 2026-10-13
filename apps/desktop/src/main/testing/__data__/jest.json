@@ -1,0 +1,142 @@
+{
+ "numFailedTestSuites": 1,
+ "numFailedTests": 1,
+ "numPassedTestSuites": 0,
+ "numPassedTests": 2,
+ "numPendingTestSuites": 0,
+ "numPendingTests": 0,
+ "numRuntimeErrorTestSuites": 0,
+ "numTodoTests": 1,
+ "numTotalTestSuites": 1,
+ "numTotalTests": 4,
+ "openHandles": [],
+ "snapshot": {
+  "added": 0,
+  "didUpdate": false,
+  "failure": false,
+  "filesAdded": 0,
+  "filesRemoved": 0,
+  "filesRemovedList": [],
+  "filesUnmatched": 0,
+  "filesUpdated": 0,
+  "matched": 0,
+  "total": 0,
+  "unchecked": 0,
+  "uncheckedKeysByFile": [],
+  "unmatched": 0,
+  "updated": 0
+ },
+ "startTime": 0,
+ "success": false,
+ "testResults": [
+  {
+   "assertionResults": [
+    {
+     "ancestorTitles": [
+      "greet"
+     ],
+     "duration": 5,
+     "failing": false,
+     "failureDetails": [],
+     "failureMessages": [],
+     "fullName": "greet greets by name",
+     "invocations": 1,
+     "location": {
+      "column": 3,
+      "line": 4
+     },
+     "numPassingAsserts": 1,
+     "retryMessages": [],
+     "retryReasons": [],
+     "status": "passed",
+     "title": "greets by name",
+     "startAt": 1791913986338
+    },
+    {
+     "ancestorTitles": [
+      "greet",
+      "punctuation"
+     ],
+     "duration": 2,
+     "failing": false,
+     "failureDetails": [],
+     "failureMessages": [],
+     "fullName": "greet punctuation uses a custom mark",
+     "invocations": 1,
+     "location": {
+      "column": 5,
+      "line": 9
+     },
+     "numPassingAsserts": 1,
+     "retryMessages": [],
+     "retryReasons": [],
+     "status": "passed",
+     "title": "uses a custom mark",
+     "startAt": 1791913986347
+    },
+    {
+     "ancestorTitles": [
+      "greet",
+      "punctuation"
+     ],
+     "duration": 6,
+     "failing": false,
+     "failureDetails": [
+      {
+       "matcherResult": {
+        "actual": "Hello, NOVA?",
+        "expected": "Hello, NOVA!",
+        "message": "expect(received).toBe(expected) // Object.is equality\n\nExpected: \"Hello, NOVA!\"\nReceived: \"Hello, NOVA?\"",
+        "name": "toBe",
+        "pass": false
+       }
+      }
+     ],
+     "failureMessages": [
+      "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: \"Hello, NOVA!\"\nReceived: \"Hello, NOVA?\"\n    at Object.toBe (/w/src/greeter.test.js:14:34)\n    at Promise.finally.completed (/w/node_modules/jest-circus/build/jestAdapterInit.js:1834:28)\n    at new Promise (<anonymous>)\n    at callAsyncCircusFn (/w/node_modules/jest-circus/build/jestAdapterInit.js:1774:10)\n    at _callCircusTest (/w/node_modules/jest-circus/build/jestAdapterInit.js:1167:40)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at _runTestInContext (/w/node_modules/jest-circus/build/jestAdapterInit.js:1103:3)\n    at runTestWithContext (/w/node_modules/jest-circus/build/jestAdapterInit.js:996:5)\n    at _runTestsForDescribeBlockOnce (/w/node_modules/jest-circus/build/jestAdapterInit.js:1008:11)\n    at _runTestsForDescribeBlock (/w/node_modules/jest-circus/build/jestAdapterInit.js:824:5)\n    at _runTestsForDescribeBlockOnce (/w/node_modules/jest-circus/build/jestAdapterInit.js:1003:11)\n    at _runTestsForDescribeBlock (/w/node_modules/jest-circus/build/jestAdapterInit.js:824:5)\n    at _runTestsForDescribeBlockOnce (/w/node_modules/jest-circus/build/jestAdapterInit.js:1003:11)\n    at _runTestsForDescribeBlock (/w/node_modules/jest-circus/build/jestAdapterInit.js:824:5)\n    at run (/w/node_modules/jest-circus/build/jestAdapterInit.js:789:3)\n    at runAndTransformResultsToJestFormat (/w/node_modules/jest-circus/build/jestAdapterInit.js:2300:21)\n    at jestAdapter (/w/node_modules/jest-circus/build/runner.js:111:19)\n    at runTestInternal (/w/node_modules/jest-runner/build/index.js:247:16)\n    at runTest (/w/node_modules/jest-runner/build/index.js:315:7)"
+     ],
+     "fullName": "greet punctuation deliberate failure",
+     "invocations": 1,
+     "location": {
+      "column": 5,
+      "line": 12
+     },
+     "numPassingAsserts": 0,
+     "retryMessages": [],
+     "retryReasons": [],
+     "status": "failed",
+     "title": "deliberate failure",
+     "startAt": 1791913986350
+    },
+    {
+     "ancestorTitles": [
+      "greet"
+     ],
+     "duration": null,
+     "failing": false,
+     "failureDetails": [],
+     "failureMessages": [],
+     "fullName": "greet not implemented yet",
+     "invocations": 1,
+     "location": {
+      "column": 6,
+      "line": 18
+     },
+     "numPassingAsserts": 0,
+     "retryMessages": [],
+     "retryReasons": [],
+     "status": "todo",
+     "title": "not implemented yet",
+     "startAt": 1791913986359
+    }
+   ],
+   "endTime": 0,
+   "message": "  \u25cf greet \u203a punctuation \u203a deliberate failure\n\n    expect(received).toBe(expected) // Object.is equality\n\n    Expected: \"Hello, NOVA!\"\n    Received: \"Hello, NOVA?\"\n\n      12 |     test('deliberate failure', () => {\n      13 |       if (process.env.NOVA_DEMO_FAIL !== '1') return; // set NOVA_DEMO_FAIL=1 to see a failure\n    > 14 |       expect(greet('NOVA', '?')).toBe('Hello, NOVA!');\n         |                                  ^\n      15 |     });\n      16 |   });\n      17 |\n\n      at Object.toBe (src/greeter.test.js:14:34)\n",
+   "name": "/w/src/greeter.test.js",
+   "startTime": 0,
+   "status": "failed",
+   "summary": ""
+  }
+ ],
+ "wasInterrupted": false
+}

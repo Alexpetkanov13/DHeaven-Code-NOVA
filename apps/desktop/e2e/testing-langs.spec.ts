@@ -14,12 +14,15 @@ const python = process.platform === 'win32' ? 'python' : 'python3';
 const ok = (cmd: string, args: string[]) => { try { execFileSync(cmd, args, { stdio: 'ignore', timeout: 60_000 }); return true; } catch { return false; } };
 const hasPytest = ok(python, ['-m', 'pytest', '--version']);
 const hasCargo = ok('cargo', ['--version']);
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 test.setTimeout(600_000);
 
-async function boot(fixture: string) {
+async function boot(fixture: string, install = false) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-tl-'));
   const ws = path.join(tmp, fixture);
-  await fs.cp(path.join(fixtures, fixture), ws, { recursive: true, filter: (s) => !/[/\\](target|__pycache__|\.pytest_cache)$/.test(s) });
+  await fs.cp(path.join(fixtures, fixture), ws, { recursive: true, filter: (s) => !/[/\\](target|__pycache__|\.pytest_cache|node_modules)$/.test(s) });
+  // The user's own install step (NOVA never installs project dependencies).
+  if (install) execFileSync(npm, ['ci', '--no-audit', '--no-fund'], { cwd: ws, stdio: 'ignore', timeout: 300_000, shell: process.platform === 'win32' });
   const args = ['.']; if (process.env.NOVA_E2E_NO_SANDBOX) args.unshift('--no-sandbox');
   const app = await electron.launch({ args, cwd: appDir, env: { ...process.env, NOVA_DEMO_FAIL: '1', NOVA_USER_DATA: path.join(tmp, 'ud') } });
   const page = await app.firstWindow();
@@ -107,3 +110,44 @@ test('cargo test: static discovery, run all, ignored reason, panic details, --sh
   await expect(node(page, 'greeter::tests::greets_by_name')).toHaveAttribute('data-status', 'passed');
   await closeApp(app);
 });
+
+for (const runner of ['vitest', 'jest'] as const) {
+  test(`${runner}: static discovery, run all, details, rerun failed (-t exact name), run one test, run one file`, async () => {
+    test.skip(!ok(npm, ['--version']) && process.platform !== 'win32', 'npm not installed');
+    const file = runner === 'vitest' ? 'src/greeter.test.ts' : 'src/greeter.test.js';
+    const id = (name: string) => `${file}::${name}`;
+    const { app, page } = await boot(`js-${runner}`, true);
+    for (const n of ['greet > greets by name', 'greet > punctuation > uses a custom mark', 'greet > punctuation > deliberate failure']) await expect(node(page, id(n))).toBeVisible();
+    await expect(page.locator('.fw-badge').first()).toHaveText(runner === 'vitest' ? 'Vitest' : 'Jest');
+
+    await page.getByRole('button', { name: 'Run All' }).click();
+    await waitDone(page);
+    if (runner === 'vitest') await counts(page, 3, 1, 1); // + top-level test; it.skip
+    else await counts(page, 2, 1, 1); // it.todo counts as skipped
+    await expect(summary(page)).toContainText('Exit 1');
+    await expect(node(page, file)).toHaveAttribute('data-status', 'failed');
+    await node(page, id('greet > punctuation > deliberate failure')).click();
+    await expect(page.getByLabel('Test details')).toContainText(runner === 'vitest' ? "expected 'Hello, NOVA?' to be 'Hello, NOVA!'" : 'expect(received).toBe(expected)');
+    if (runner === 'vitest') {
+      await node(page, id('greet > greets by name')).click();
+      await expect(page.getByLabel('Test details')).toContainText('greeting NOVA');
+    }
+    if (shots) await page.screenshot({ path: path.join(shots, `nova-${runner}.png`) });
+
+    await page.getByRole('button', { name: 'Rerun Failed' }).click();
+    await waitDone(page);
+    await expect(page.getByLabel('Test output')).toContainText('^(?:greet punctuation deliberate failure)$');
+    await expect(summary(page)).toHaveAttribute('data-failed', '1');
+
+    const one = node(page, id('greet > punctuation > uses a custom mark'));
+    await one.hover(); await one.getByTitle('Run').click();
+    await waitDone(page);
+    await expect(summary(page)).toContainText('Exit 0');
+    await expect(one).toHaveAttribute('data-status', 'passed');
+
+    await page.locator(`[data-test-file="${file}"]`).getByTitle('Run tests in file').click();
+    await waitDone(page);
+    await expect(summary(page)).toContainText('Exit 1');
+    await closeApp(app);
+  });
+}
