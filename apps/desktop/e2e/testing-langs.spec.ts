@@ -88,7 +88,7 @@ test('cargo test: static discovery, run all, ignored reason, panic details, --sh
   await expect(node(page, 'src/greeter.rs#greeter::tests')).toHaveAttribute('data-status', 'failed');
   await node(page, 'greeter::tests::deliberate_failure').click();
   await expect(page.getByLabel('Test details')).toContainText('assertion `left == right` failed');
-  await expect(page.getByLabel('Test details')).toContainText('panicked at src/greeter.rs:39');
+  await expect(page.getByLabel('Test details')).toContainText(/panicked at src[\\/]greeter\.rs:39/); // rustc prints src\greeter.rs on Windows
   await node(page, 'greeter::tests::greets_by_name').click();
   await expect(page.getByLabel('Test details')).toContainText('greeting NOVA');
   await node(page, 'greeter::tests::not_yet').click();
